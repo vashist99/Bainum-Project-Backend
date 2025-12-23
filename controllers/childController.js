@@ -1,5 +1,4 @@
 import { Child } from "../models/User.js";
-import { parentChildAccess } from "../middleware/parentChildAccess.js";
 
 export const createChild = async (req, res) => {
     try {
@@ -61,7 +60,16 @@ export const getChildById = async (req, res) => {
         }
 
         // If user is a parent, verify they have access to this child
-        await parentChildAccess(req, res, next);
+        // The parentChildAccess middleware should be applied in the route, not here
+        // But we can also check here as a safety measure
+        if (req.user && req.user.role === 'parent' && req.user.childId) {
+            const userChildId = req.user.childId.toString();
+            const childId = child._id.toString();
+            
+            if (userChildId !== childId) {
+                return res.status(403).json({ message: "You don't have access to this child's data" });
+            }
+        }
         
         res.status(200).json({ child });
     } catch (error) {
