@@ -34,16 +34,36 @@ if (!fs.existsSync(uploadsDir)) {
 connectDB();
 
 //middleware
-var whitelist = ["https://bainum-project-saf2.vercel.app/", "http://localhost:5173"]; // Replace with your actual URLs
-var corsOptions = { 
+// CORS configuration
+// Remove trailing slashes from URLs for proper matching
+const whitelist = [
+  "https://bainum-project-saf2.vercel.app",
+  "http://localhost:5173",
+  "http://localhost:3000"
+];
+
+const corsOptions = { 
   origin: function (origin, callback) {
-    if (whitelist.indexOf(origin) !== -1 || !origin) {
-      callback(null, true)
+    // Allow requests with no origin (like mobile apps, Postman, etc.)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    // Remove trailing slash from origin for comparison
+    const originWithoutSlash = origin.replace(/\/$/, '');
+    
+    // Check if origin is in whitelist
+    if (whitelist.includes(originWithoutSlash)) {
+      callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'))
+      console.log(`CORS blocked origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
     }
   },
-  credentials: true 
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset']
 };
 
 app.use(cors(corsOptions));
