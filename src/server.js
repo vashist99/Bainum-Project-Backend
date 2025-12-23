@@ -34,7 +34,7 @@ if (!fs.existsSync(uploadsDir)) {
 connectDB();
 
 //middleware
-var whitelist = ["https://bainum-project-saf2-git-main-vashist99s-projects.vercel.app/", "http://localhost:5173"]; // Replace with your actual URLs
+var whitelist = ["https://bainum-project-saf2.vercel.app/", "http://localhost:5173"]; // Replace with your actual URLs
 var corsOptions = { 
   origin: function (origin, callback) {
     if (whitelist.indexOf(origin) !== -1 || !origin) {
