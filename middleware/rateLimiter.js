@@ -87,6 +87,11 @@ try {
 // Main rate limiter middleware
 export default async function rateLimiter(req, res, next) {
     try {
+        // Skip rate limiting for OPTIONS requests (CORS preflight)
+        if (req.method === 'OPTIONS') {
+            return next();
+        }
+        
         // Use Redis-based rate limiter if available, otherwise use in-memory
         if (redisRateLimiter) {
             const ip = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
