@@ -100,8 +100,32 @@ export const login = async (req, res) => {
             });
         }
 
-        // Compare hashed password
-        const isPasswordValid = await bcrypt.compare(password, user.password);
+        // Compare password - support both hashed (bcrypt) and plain text (for migration)
+        let isPasswordValid = false;
+        
+        // Check if password is hashed (bcrypt hashes start with $2a$, $2b$, or $2y$)
+        if (user.password.startsWith('$2a$') || user.password.startsWith('$2b$') || user.password.startsWith('$2y$')) {
+            // Password is hashed, use bcrypt.compare
+            isPasswordValid = await bcrypt.compare(password, user.password);
+            
+            // If password is valid and was plain text before, hash it now for future logins
+            if (isPasswordValid) {
+                // Password is already hashed, no need to update
+            }
+        } else {
+            // Password is plain text (legacy), compare directly
+            isPasswordValid = (user.password === password);
+            
+            // If password is valid, hash it and update the database for future logins
+            if (isPasswordValid) {
+                const saltRounds = 10;
+                const hashedPassword = await bcrypt.hash(password, saltRounds);
+                user.password = hashedPassword;
+                await user.save();
+                console.log(`Migrated password to bcrypt for user: ${email}`);
+            }
+        }
+        
         if (!isPasswordValid) {
             console.log(`Invalid password for: ${email}`);
             return res.status(401).json({ message: "Invalid email or password" });
