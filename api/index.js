@@ -35,12 +35,41 @@ connectDB();
 
 //middleware
 // CORS configuration
-// Remove trailing slashes from URLs for proper matching
-const whitelist = [
-  "https://bainum-project-saf2.vercel.app",
-  "http://localhost:5173",
-  "http://localhost:3000"
-];
+// Build allowed origins list from environment variables
+const buildAllowedOrigins = () => {
+  const allowedOrigins = [];
+  
+  // Parse ALLOWED_ORIGINS from environment (comma-separated)
+  if (process.env.ALLOWED_ORIGINS) {
+    const origins = process.env.ALLOWED_ORIGINS.split(',').map(url => url.trim());
+    allowedOrigins.push(...origins);
+  }
+  
+  // Fallback to FRONTEND_URL if ALLOWED_ORIGINS is not set
+  if (allowedOrigins.length === 0 && process.env.FRONTEND_URL) {
+    allowedOrigins.push(process.env.FRONTEND_URL);
+  }
+  
+  // Always include localhost origins for development
+  const localhostOrigins = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000"
+  ];
+  
+  // Add localhost origins if not already present
+  localhostOrigins.forEach(origin => {
+    if (!allowedOrigins.includes(origin)) {
+      allowedOrigins.push(origin);
+    }
+  });
+  
+  // Remove trailing slashes from all URLs for proper matching
+  return allowedOrigins.map(url => url.replace(/\/$/, ''));
+};
+
+const whitelist = buildAllowedOrigins();
 
 const corsOptions = { 
   origin: function (origin, callback) {
@@ -57,6 +86,7 @@ const corsOptions = {
       callback(null, true);
     } else {
       console.log(`CORS blocked origin: ${origin}`);
+      console.log(`Allowed origins: ${whitelist.join(', ')}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
