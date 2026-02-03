@@ -92,7 +92,12 @@ export const sendTeacherInvitation = async (req, res) => {
                 inviterName || 'Administrator'
             );
         } catch (emailError) {
-            console.error('Failed to send email, but invitation created:', emailError);
+            console.error('Failed to send email, but invitation created:', {
+                error: emailError.message,
+                code: emailError.code,
+                email: email,
+                teacherName: `${firstName} ${lastName}`
+            });
             
             // Create invitation link for manual sharing
             const isProduction = process.env.NODE_ENV === 'production' || 

@@ -94,7 +94,12 @@ export const sendInvitation = async (req, res) => {
         try {
             await sendInvitationEmail(email, child.name, token, inviterName || 'Administrator');
         } catch (emailError) {
-            console.error('Failed to send email, but invitation created:', emailError);
+            console.error('Failed to send email, but invitation created:', {
+                error: emailError.message,
+                code: emailError.code,
+                email: email,
+                childName: child.name
+            });
             
             // Create invitation link for manual sharing
             const isProduction = process.env.NODE_ENV === 'production' || 
