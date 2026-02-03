@@ -13,8 +13,17 @@ function authenticateToken(req, res, next) {
     // Verify the token
     jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
         if (err) {
+            console.error('JWT verification error:', err.message);
             return res.sendStatus(403); // If token is invalid or expired, return Forbidden
         }
+        
+        // Debug: Log decoded user for teacher invitation requests
+        if (req.path && req.path.includes('teacher-invitations')) {
+            console.log('Auth middleware - Decoded JWT user:', JSON.stringify(user, null, 2));
+            console.log('Auth middleware - User role:', user?.role);
+            console.log('Auth middleware - User id:', user?.id);
+        }
+        
         req.user = user; // Attach user payload to the request object
         next(); // Proceed to the next middleware/route handler
     });

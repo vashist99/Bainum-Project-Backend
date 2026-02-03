@@ -95,6 +95,57 @@ export const getTeacherById = async (req, res) => {
     }
 };
 
+export const updateTeacher = async (req, res) => {
+    try {
+        const { name, email, center, education, dateOfBirth } = req.body;
+        const { id } = req.params;
+
+        // Validate required fields
+        if (!name || !email || !center || !education || !dateOfBirth) {
+            return res.status(400).json({ message: "All fields are required" });
+        }
+
+        // Check if teacher exists
+        const teacher = await Teacher.findById(id);
+        if (!teacher) {
+            return res.status(404).json({ message: "Teacher not found" });
+        }
+
+        // Check if email is being changed and if new email already exists
+        if (email !== teacher.email) {
+            const existingTeacher = await Teacher.findOne({ email });
+            if (existingTeacher) {
+                return res.status(400).json({ message: "Teacher with this email already exists" });
+            }
+        }
+
+        // Update teacher
+        teacher.name = name;
+        teacher.email = email;
+        teacher.center = center;
+        teacher.education = education;
+        teacher.dateOfBirth = dateOfBirth;
+
+        await teacher.save();
+
+        res.status(200).json({
+            message: "Teacher updated successfully",
+            teacher: {
+                id: teacher._id,
+                name: teacher.name,
+                email: teacher.email,
+                role: teacher.role,
+                center: teacher.center,
+                education: teacher.education,
+                dateOfBirth: teacher.dateOfBirth,
+            },
+        });
+    } catch (error) {
+        console.error("Error updating teacher:", error);
+        res.status(500).json({ message: error.message });
+    }
+};
+
 export const deleteTeacher = async (req, res) => {
     try {
         const teacher = await Teacher.findByIdAndDelete(req.params.id);

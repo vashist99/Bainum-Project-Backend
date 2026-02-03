@@ -1,0 +1,51 @@
+name: Backend Security Scan
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run weekly security scans every Sunday at midnight UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:  # Allow manual triggering when GitHub is stable
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    
+    - name: Install dependencies
+      run: |
+        if [ -f package-lock.json ]; then
+          npm ci || npm install
+        else
+          echo "package-lock.json not found, running npm install"
+          npm install
+        fi
+    
+    - name: Run npm audit
+      run: |
+        echo "🔍 Scanning backend dependencies for vulnerabilities..."
+        npm audit --audit-level=moderate || echo "⚠️ Some vulnerabilities found (non-blocking)"
+      continue-on-error: true
+    
+    - name: Check for exposed secrets
+      run: |
+        echo "🔐 Checking for common secret patterns..."
+        # Basic check for common secret patterns
+        if grep -r "password.*=.*['\"]" --include="*.js" . 2>/dev/null | grep -v "//.*password" | grep -v "password.*//" | grep -v "node_modules"; then
+          echo "⚠️ Potential hardcoded passwords found - please review"
+        else
+          echo "✅ No obvious hardcoded passwords detected"
+        fi
+      continue-on-error: true

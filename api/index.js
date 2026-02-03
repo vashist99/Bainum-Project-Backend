@@ -14,6 +14,7 @@ import connectDB from "../config/db.js";
 import authRoutes from "../routes/authRoutes.js";
 import childRoutes from "../routes/childRoutes.js";
 import teacherRoutes from "../routes/teacherRoutes.js";
+import centerRoutes from "../routes/centerRoutes.js";
 import noteRoutes from "../routes/noteRoutes.js";
 import whisperRoutes from "../routes/whisperRoutes.js";
 import invitationRoutes from "../routes/invitationRoutes.js";
@@ -113,6 +114,7 @@ app.get("/", (req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/children", childRoutes);
 app.use("/api/teachers", teacherRoutes);
+app.use("/api/centers", centerRoutes);
 app.use("/api/notes", noteRoutes);
 app.use("/api", whisperRoutes);
 app.use("/api/invitations", invitationRoutes);
