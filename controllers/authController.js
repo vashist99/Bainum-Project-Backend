@@ -69,7 +69,6 @@ export const login = async (req, res) => {
             });
         }
 
-        console.log(`Login attempt for email: ${email}`);
 
         // Try to find user in Admin, Teacher, and Parent collections
         let user = await Admin.findOne({ email });
@@ -86,15 +85,12 @@ export const login = async (req, res) => {
         }
         
         if (!user) {
-            console.log(`User not found: ${email}`);
             return res.status(401).json({ message: "Invalid email or password" });
         }
 
-        console.log(`User found: ${userType}, role: ${user.role}`);
 
         // Check if parent account is activated
         if (user.role === 'parent' && !user.invitationAccepted) {
-            console.log(`Parent account not activated: ${email}`);
             return res.status(401).json({ 
                 message: "Please complete your registration using the invitation link" 
             });
@@ -122,12 +118,10 @@ export const login = async (req, res) => {
                 const hashedPassword = await bcrypt.hash(password, saltRounds);
                 user.password = hashedPassword;
                 await user.save();
-                console.log(`Migrated password to bcrypt for user: ${email}`);
             }
         }
         
         if (!isPasswordValid) {
-            console.log(`Invalid password for: ${email}`);
             return res.status(401).json({ message: "Invalid email or password" });
         }
 
@@ -146,7 +140,6 @@ export const login = async (req, res) => {
 
         const token = jwt.sign(userResponse, process.env.JWT_SECRET, { expiresIn: '1h' });
 
-        console.log(`Login successful for: ${email}, role: ${user.role}`);
 
         res.status(200).json({
             message: "Login successful",

@@ -50,14 +50,6 @@ try {
     const redisUrl = process.env.UPSTASH_REDIS_REST_URL?.trim();
     const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
 
-    // Debug logging
-    console.log("Redis config check:", {
-        hasUrl: !!redisUrl,
-        urlLength: redisUrl?.length || 0,
-        hasToken: !!redisToken,
-        tokenLength: redisToken?.length || 0
-    });
-
     if (redisUrl && redisToken) {
         // Initialize Redis client
         const redis = new Redis({
@@ -74,14 +66,9 @@ try {
             prefix: "@upstash/ratelimit",
         });
 
-        console.log("✅ Redis-based rate limiting enabled");
-    } else {
-        console.warn("⚠️  Redis credentials not found. Using in-memory rate limiting.");
-        console.warn("   Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in .env for Redis-based rate limiting.");
     }
 } catch (error) {
-    console.error("❌ Error initializing Redis rate limiter:", error.message);
-    console.warn("   Falling back to in-memory rate limiting.");
+    // Fallback to in-memory rate limiting on error
 }
 
 // Main rate limiter middleware

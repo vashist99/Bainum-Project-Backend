@@ -93,12 +93,18 @@ export const sendInvitation = async (req, res) => {
         // Send invitation email
         try {
             await sendInvitationEmail(email, child.name, token, inviterName || 'Administrator');
-            console.log(`Invitation sent to ${email} for child ${child.name}`);
         } catch (emailError) {
             console.error('Failed to send email, but invitation created:', emailError);
             
             // Create invitation link for manual sharing
-            const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+            const isProduction = process.env.NODE_ENV === 'production' || 
+                                process.env.RENDER || 
+                                !process.env.FRONTEND_URL?.includes('localhost');
+            let baseUrl = process.env.FRONTEND_URL;
+            if (!baseUrl || (isProduction && baseUrl.includes('localhost'))) {
+                baseUrl = 'https://bainum-frontend-prod.vercel.app';
+            }
+            baseUrl = baseUrl.replace(/\/$/, '');
             const invitationLink = `${baseUrl}/parent/register?token=${token}`;
             
             // Still return success, but note email issue and include the link

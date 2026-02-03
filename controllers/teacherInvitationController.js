@@ -10,34 +10,10 @@ export const sendTeacherInvitation = async (req, res) => {
     try {
         const { email, firstName, lastName, education, dateOfBirth, center } = req.body;
         
-        // Debug: Log the full req.user object to see what we're getting
-        console.log('Teacher invitation request - req.user:', JSON.stringify(req.user, null, 2));
-        console.log('Teacher invitation request - req.user type:', typeof req.user);
-        console.log('Teacher invitation request - req.user keys:', req.user ? Object.keys(req.user) : 'null');
-        
         const { id: sentBy, role: sentByRole, name: inviterName } = req.user || {};
-
-        // Debug: Log extracted values
-        console.log('Extracted values:', {
-            sentBy,
-            sentByRole,
-            inviterName,
-            hasId: !!sentBy,
-            hasRole: !!sentByRole,
-            roleValue: sentByRole,
-            roleType: typeof sentByRole,
-            roleIsAdmin: sentByRole === 'admin'
-        });
 
         // Validate user is admin
         if (!sentBy || sentByRole !== 'admin') {
-            console.log('403 Error - User validation failed:', {
-                hasId: !!sentBy,
-                hasRole: !!sentByRole,
-                roleValue: sentByRole,
-                expectedRole: 'admin',
-                roleMatch: sentByRole === 'admin'
-            });
             return res.status(403).json({ 
                 message: "Only admins can send teacher invitations",
                 debug: process.env.NODE_ENV === 'development' ? {
@@ -67,10 +43,6 @@ export const sendTeacherInvitation = async (req, res) => {
         // Check if teacher with this email already exists
         // Allow invitations for existing teachers (for re-invitation or account recovery)
         const existingTeacher = await Teacher.findOne({ email: email.toLowerCase() });
-        if (existingTeacher) {
-            console.log(`Teacher ${email} already exists. Allowing re-invitation.`);
-            // Continue - allow re-invitation for existing teachers
-        }
 
         // Check if there's already a pending invitation for this email
         const existingInvitation = await TeacherInvitation.findOne({
@@ -119,12 +91,18 @@ export const sendTeacherInvitation = async (req, res) => {
                 token, 
                 inviterName || 'Administrator'
             );
-            console.log(`Teacher invitation sent to ${email}`);
         } catch (emailError) {
             console.error('Failed to send email, but invitation created:', emailError);
             
             // Create invitation link for manual sharing
-            const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+            const isProduction = process.env.NODE_ENV === 'production' || 
+                                process.env.RENDER || 
+                                !process.env.FRONTEND_URL?.includes('localhost');
+            let baseUrl = process.env.FRONTEND_URL;
+            if (!baseUrl || (isProduction && baseUrl.includes('localhost'))) {
+                baseUrl = 'https://bainum-frontend-prod.vercel.app';
+            }
+            baseUrl = baseUrl.replace(/\/$/, '');
             const invitationLink = `${baseUrl}/teacher/register?token=${token}`;
             
             // Still return success, but note email issue and include the link
