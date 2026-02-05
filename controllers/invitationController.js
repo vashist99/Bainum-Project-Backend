@@ -123,7 +123,7 @@ export const sendInvitation = async (req, res) => {
                     expiresAt: invitation.expiresAt
                 },
                 warning: "Email not configured. Please share this invitation link with the parent manually.",
-                emailError: process.env.NODE_ENV === 'development' ? emailError.message : undefined
+                emailError: emailError.message // Always include error message for debugging
             });
         }
 
