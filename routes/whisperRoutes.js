@@ -103,7 +103,7 @@ router.get('/assessments/child/:childId/latest', async (req, res) => {
 // Route to accept and save assessment after transcript review
 router.post('/assessments/accept', async (req, res) => {
     try {
-        const { childId, audioFileName, transcript, scienceTalk, socialTalk, literatureTalk, languageDevelopment, keywordCounts, uploadedBy, date } = req.body;
+        const { childId, audioFileName, transcript, scienceTalk, socialTalk, literatureTalk, languageDevelopment, keywordCounts, ragScores, ragSegments, classificationMethod, uploadedBy, date } = req.body;
 
         if (!childId) {
             return res.status(400).json({ message: "Child ID is required" });
@@ -129,6 +129,9 @@ router.post('/assessments/accept', async (req, res) => {
                 literature: 0,
                 language: 0
             },
+            ragScores: ragScores || null,
+            ragSegments: ragSegments || null,
+            classificationMethod: classificationMethod || 'keyword-only',
             uploadedBy: uploadedBy || "Unknown",
             date: date ? new Date(date) : new Date()
         });

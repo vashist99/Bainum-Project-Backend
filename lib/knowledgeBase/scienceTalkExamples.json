@@ -1,0 +1,54 @@
+{
+  "category": "science",
+  "description": "Science talk involves discussions about scientific concepts, observations, experiments, and natural phenomena. It includes questioning, predicting, observing, and explaining scientific ideas.",
+  "characteristics": [
+    "Uses scientific vocabulary and concepts",
+    "Involves questioning and inquiry (why, how, what)",
+    "Discusses observations and predictions",
+    "Explores cause and effect relationships",
+    "References natural phenomena, experiments, or scientific processes",
+    "Uses measurement, comparison, and classification language"
+  ],
+  "examples": [
+    {
+      "text": "Look at the plant! It grew bigger. Why did it grow? Because we gave it water and sunlight. The leaves are green now.",
+      "indicators": ["observation", "questioning", "cause-effect", "natural phenomena"]
+    },
+    {
+      "text": "Let's do an experiment. What happens if we mix red and blue? I predict it will make purple. Let's test it!",
+      "indicators": ["experiment", "prediction", "testing", "scientific method"]
+    },
+    {
+      "text": "The ice is melting. It's turning into water. Why? Because it's warm in here. Ice melts when it gets hot.",
+      "indicators": ["observation", "change", "cause-effect", "scientific explanation"]
+    },
+    {
+      "text": "I see a butterfly! It has wings. How does it fly? The wings move up and down. That's how it goes in the air.",
+      "indicators": ["observation", "questioning", "scientific inquiry", "natural phenomena"]
+    },
+    {
+      "text": "The moon is round tonight. Last week it was different. The moon changes shape. Why does it change?",
+      "indicators": ["observation", "comparison", "questioning", "astronomical concepts"]
+    },
+    {
+      "text": "This rock is heavy. This one is light. Let's measure them. The big one weighs more because it's bigger.",
+      "indicators": ["measurement", "comparison", "scientific vocabulary", "properties"]
+    },
+    {
+      "text": "The seed needs water to grow. We planted it in soil. Now we wait and see what happens. I think it will sprout.",
+      "indicators": ["scientific process", "prediction", "natural growth", "cause-effect"]
+    },
+    {
+      "text": "Look at the clouds. They're moving fast. That means wind. The wind pushes the clouds across the sky.",
+      "indicators": ["observation", "weather concepts", "cause-effect", "natural phenomena"]
+    },
+    {
+      "text": "We mixed colors and made orange. Red and yellow make orange. That's a fact. We proved it with our experiment.",
+      "indicators": ["experiment", "scientific fact", "color theory", "conclusion"]
+    },
+    {
+      "text": "The magnet sticks to the metal. It doesn't stick to plastic. Why? Because magnets only attract certain things.",
+      "indicators": ["experiment", "questioning", "scientific properties", "magnetism"]
+    }
+  ]
+}

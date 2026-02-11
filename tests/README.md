@@ -7,9 +7,12 @@ This directory contains automated API tests for the Bainum Project backend using
 ```
 tests/
 └── api/
-    ├── auth.test.js      # Authentication endpoint tests
-    ├── children.test.js  # Children API tests
-    └── teachers.test.js  # Teachers API tests
+    ├── auth.test.js        # Authentication endpoint tests
+    ├── assessments.test.js # Assessments API tests (accept, get by child)
+    ├── centers.test.js     # Centers API tests
+    ├── children.test.js    # Children API tests
+    ├── teachers.test.js    # Teachers API tests
+    └── whisper.test.js     # Whisper/audio processing validation tests
 ```
 
 ## Running Tests
@@ -61,6 +64,16 @@ TEST_ADMIN_PASSWORD=password123
 ### Teachers API Tests
 - ✅ Authentication required
 - ✅ Get teachers list
+
+### Assessments API Tests
+- ✅ GET assessments by child
+- ✅ GET latest assessment
+- ✅ POST accept assessment (requires childId)
+- ✅ RAG segments and classification method support
+
+### Whisper API Tests
+- ✅ Requires childId
+- ✅ Requires audio file
 
 ## CI/CD Integration
 

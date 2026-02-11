@@ -1,0 +1,54 @@
+{
+  "category": "language",
+  "description": "Language development talk involves discussions about words, communication, vocabulary, grammar, reading, writing, and language skills. It includes metalinguistic awareness and explicit language learning.",
+  "characteristics": [
+    "Discusses words, vocabulary, or language explicitly",
+    "References communication and speaking",
+    "Involves reading, writing, or literacy skills",
+    "Uses complex sentence structures",
+    "Shows vocabulary development and word learning",
+    "Demonstrates understanding of language rules"
+  ],
+  "examples": [
+    {
+      "text": "That's a big word. What does it mean? Can you explain it? I want to learn new words. Vocabulary is important.",
+      "indicators": ["word learning", "vocabulary", "metalinguistic awareness", "language inquiry"]
+    },
+    {
+      "text": "I can read this sentence. Look, I know these words. Reading helps me learn. Books teach me new things.",
+      "indicators": ["reading skills", "literacy", "word recognition", "language learning"]
+    },
+    {
+      "text": "I'm writing my name. These are letters. A-B-C. I know the alphabet. Letters make words.",
+      "indicators": ["writing", "alphabet knowledge", "letter recognition", "literacy skills"]
+    },
+    {
+      "text": "I said that wrong. Let me try again. The right way to say it is... I'm learning to speak better.",
+      "indicators": ["self-correction", "language awareness", "communication skills", "self-monitoring"]
+    },
+    {
+      "text": "That word sounds funny. It rhymes with cat. Words that sound the same are rhymes. I like rhyming words.",
+      "indicators": ["phonological awareness", "rhyming", "sound patterns", "metalinguistic skills"]
+    },
+    {
+      "text": "I'm telling a story with lots of words. I'm using describing words. Adjectives make it interesting. Language is fun.",
+      "indicators": ["vocabulary", "grammar awareness", "descriptive language", "language structure"]
+    },
+    {
+      "text": "I understand what you're saying. You're communicating with me. We're having a conversation. Talking is how we share ideas.",
+      "indicators": ["communication awareness", "conversation skills", "language function", "social language"]
+    },
+    {
+      "text": "This is a sentence. It has a subject and a verb. Grammar helps us make sense. I'm learning sentence structure.",
+      "indicators": ["grammar", "sentence structure", "metalinguistic awareness", "language rules"]
+    },
+    {
+      "text": "I learned a new word today. It means happy. Synonyms are words that mean the same. Language has many words.",
+      "indicators": ["vocabulary expansion", "word relationships", "semantic knowledge", "language learning"]
+    },
+    {
+      "text": "I'm speaking clearly so you can understand. Pronunciation matters. When I talk, I want to be understood. Communication is important.",
+      "indicators": ["communication skills", "pronunciation awareness", "language function", "pragmatic language"]
+    }
+  ]
+}

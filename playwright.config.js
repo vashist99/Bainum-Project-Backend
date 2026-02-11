@@ -25,6 +25,6 @@ export default defineConfig({
     actionTimeout: 30000, // 30 seconds
     navigationTimeout: 30000, // 30 seconds
   },
-  /* Global timeout for each test */
-  timeout: 60000, // 60 seconds per test
+  /* Global timeout for each test (longer for cold-start APIs) */
+  timeout: 90000, // 90 seconds per test
 });

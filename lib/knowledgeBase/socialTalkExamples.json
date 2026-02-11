@@ -1,0 +1,54 @@
+{
+  "category": "social",
+  "description": "Social talk involves communication about feelings, relationships, social interactions, sharing, helping, and understanding others. It includes emotional expression, social norms, and interpersonal communication.",
+  "characteristics": [
+    "Discusses feelings and emotions",
+    "Involves sharing, helping, or cooperation",
+    "References relationships and social interactions",
+    "Uses social language (please, thank you, sorry)",
+    "Discusses fairness, kindness, and social norms",
+    "Involves understanding others' perspectives"
+  ],
+  "examples": [
+    {
+      "text": "I'm happy because my friend shared the toy with me. That was nice of them. I said thank you.",
+      "indicators": ["emotion", "sharing", "gratitude", "social interaction"]
+    },
+    {
+      "text": "Can I play with you? Please? I'll be nice. We can take turns. That's fair.",
+      "indicators": ["social request", "politeness", "turn-taking", "fairness"]
+    },
+    {
+      "text": "I feel sad when someone is mean. It's not nice to hurt feelings. We should be kind to each other.",
+      "indicators": ["emotion", "empathy", "social norms", "kindness"]
+    },
+    {
+      "text": "My mom helped me tie my shoes. I love my mom. She takes care of me. Family is important.",
+      "indicators": ["family relationships", "gratitude", "love", "care"]
+    },
+    {
+      "text": "I'm sorry I took your crayon. I should have asked first. That was wrong. Can you forgive me?",
+      "indicators": ["apology", "empathy", "social norms", "repairing relationships"]
+    },
+    {
+      "text": "Let's work together. We can help each other. Teamwork makes it easier. Everyone can participate.",
+      "indicators": ["cooperation", "helping", "teamwork", "inclusion"]
+    },
+    {
+      "text": "I'm excited about the party! Everyone will be there. We'll have fun together. I can't wait to see my friends.",
+      "indicators": ["emotion", "social anticipation", "friendship", "excitement"]
+    },
+    {
+      "text": "When someone is crying, we should help them. Ask what's wrong. Be a good friend. Show you care.",
+      "indicators": ["empathy", "helping", "friendship", "emotional support"]
+    },
+    {
+      "text": "I shared my snack because they didn't have one. It's good to share. Sharing makes people happy.",
+      "indicators": ["sharing", "generosity", "empathy", "social values"]
+    },
+    {
+      "text": "We need to take turns on the swing. That's fair. Everyone gets a chance. Fair is important.",
+      "indicators": ["turn-taking", "fairness", "social rules", "equity"]
+    }
+  ]
+}

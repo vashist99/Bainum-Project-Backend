@@ -1,0 +1,54 @@
+{
+  "category": "literature",
+  "description": "Literature talk involves storytelling, narrative language, imaginative play, and references to books, stories, characters, and fictional elements. It includes creative expression, narrative structure, and literary concepts.",
+  "characteristics": [
+    "References stories, books, or characters",
+    "Uses narrative language and story structure",
+    "Involves imaginative or pretend play",
+    "Discusses story elements (beginning, middle, end, characters)",
+    "Uses literary language and phrases",
+    "Creates or retells stories"
+  ],
+  "examples": [
+    {
+      "text": "Once upon a time, there was a princess in a castle. She was kind and brave. One day, a dragon came. The princess saved the day.",
+      "indicators": ["story structure", "fairy tale elements", "characters", "narrative"]
+    },
+    {
+      "text": "Let's read this book. It has pictures. The story is about a bear who goes on an adventure. I love this part!",
+      "indicators": ["book reference", "story elements", "engagement", "literary appreciation"]
+    },
+    {
+      "text": "I'm pretending to be a superhero. I can fly! I'm saving the city from monsters. This is my superpower.",
+      "indicators": ["pretend play", "imagination", "character role-play", "creative expression"]
+    },
+    {
+      "text": "The story starts with a little girl. Then she finds a magic door. At the end, she learns an important lesson.",
+      "indicators": ["story structure", "narrative elements", "beginning-middle-end", "story analysis"]
+    },
+    {
+      "text": "Once upon a time, there was a magic forest. The trees could talk. The animals were friends. They lived happily ever after.",
+      "indicators": ["fairy tale language", "magical elements", "story structure", "imaginative content"]
+    },
+    {
+      "text": "I'm drawing a picture of the story. This is the character. Here's the setting. The story happens here.",
+      "indicators": ["story elements", "visual representation", "character and setting", "story comprehension"]
+    },
+    {
+      "text": "Let me tell you a story. It begins with a cat. The cat goes on a journey. She meets friends. They have adventures together.",
+      "indicators": ["storytelling", "narrative structure", "character development", "creative expression"]
+    },
+    {
+      "text": "The book has chapters. We're on chapter three. The character is in trouble now. I wonder what happens next.",
+      "indicators": ["book structure", "literary elements", "engagement", "predictive thinking"]
+    },
+    {
+      "text": "I'm making up a story about a robot. The robot wants to be a friend. It learns about feelings. The end is happy.",
+      "indicators": ["story creation", "character development", "narrative arc", "creative writing"]
+    },
+    {
+      "text": "The author wrote this book. The illustrator drew the pictures. Together they made a beautiful story for us to read.",
+      "indicators": ["literary concepts", "book creation", "author and illustrator", "literary appreciation"]
+    }
+  ]
+}

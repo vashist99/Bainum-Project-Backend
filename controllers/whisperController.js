@@ -2,6 +2,8 @@ import dotenv from "dotenv";
 import Assessment from "../models/Assessment.js";
 import fs from "fs";
 import revai from "../lib/revai.js";
+import ragClassifier from "../lib/ragClassifier.js";
+import hybridScorer from "../lib/hybridScorer.js";
 
 dotenv.config();
 
@@ -201,13 +203,57 @@ const revaiController = async (req, res) => {
 
         // Analyze transcript for keywords
         const keywordCounts = analyzeTranscript(transcript || "");
-        const scores = calculateScores(keywordCounts);
+        const keywordScores = calculateScores(keywordCounts);
 
         console.log("=== Keyword Analysis Complete ===");
         console.log("Transcript length:", transcript?.length || 0, "characters");
         console.log("Total words in transcript:", transcript?.split(/\s+/).filter(w => w.length > 0).length || 0);
         console.log("Keyword counts:", keywordCounts);
-        console.log("Scores:", scores);
+        console.log("Keyword scores:", keywordScores);
+
+        // RAG Classification (if enabled)
+        let ragScores = null;
+        let ragSegments = null;
+        let finalScores = keywordScores;
+        // Check RAG_ENABLED - handle string 'true', boolean true, or case variations
+        const ragEnabledValue = process.env.RAG_ENABLED?.toString().toLowerCase().trim();
+        const ragEnabled = ragEnabledValue === 'true';
+        
+        // Debug logging for RAG configuration
+        console.log("=== RAG Configuration Debug ===");
+        console.log("RAG_ENABLED env value:", process.env.RAG_ENABLED);
+        console.log("RAG_ENABLED normalized:", ragEnabledValue);
+        console.log("ragEnabled computed:", ragEnabled);
+        console.log("OPENAI_API_KEY set:", !!process.env.OPENAI_API_KEY);
+
+        if (ragEnabled && transcript && transcript.trim().length > 0) {
+            try {
+                console.log("=== Starting RAG Classification ===");
+                const ragResult = await ragClassifier.classifyWithSegments(transcript);
+                ragScores = ragResult.scores;
+                ragSegments = ragResult.segments || [];
+                console.log("RAG scores:", ragScores);
+                console.log("RAG segments found:", ragSegments.length);
+
+                // Combine RAG and keyword scores using hybrid scorer
+                finalScores = hybridScorer.combineScores(ragScores, keywordScores);
+                console.log("=== Hybrid Scoring Complete ===");
+                console.log("Final combined scores:", finalScores);
+                console.log("Weights:", hybridScorer.getWeights());
+            } catch (ragError) {
+                console.error("⚠️  RAG classification failed, falling back to keyword-only:", ragError.message);
+                // Use keyword scores as fallback
+                finalScores = keywordScores;
+                ragScores = null;
+                ragSegments = null;
+            }
+        } else {
+            if (!ragEnabled) {
+                console.log("RAG classification is disabled (RAG_ENABLED=false or not set)");
+            } else {
+                console.log("Skipping RAG classification (empty transcript)");
+            }
+        }
 
         // Prepare assessment data (but don't save yet - wait for user acceptance)
         console.log("Preparing assessment data...");
@@ -230,14 +276,23 @@ const revaiController = async (req, res) => {
             childId,
             audioFileName: req.file.filename,
             transcript: transcript || "",
-            scienceTalk: scores.scienceTalk,
-            socialTalk: scores.socialTalk,
-            literatureTalk: scores.literatureTalk,
-            languageDevelopment: scores.languageDevelopment,
+            scienceTalk: finalScores.scienceTalk,
+            socialTalk: finalScores.socialTalk,
+            literatureTalk: finalScores.literatureTalk,
+            languageDevelopment: finalScores.languageDevelopment,
             keywordCounts,
             uploadedBy: uploadedBy || "Unknown",
             date: assessmentDate
         };
+
+        // Optionally store RAG scores and segments for debugging/analysis
+        if (ragScores) {
+            assessmentData.ragScores = ragScores;
+            assessmentData.ragSegments = ragSegments;
+            assessmentData.classificationMethod = 'hybrid';
+        } else {
+            assessmentData.classificationMethod = 'keyword-only';
+        }
 
         // Don't save yet - return data for user review
         console.log("✓ Assessment data prepared (awaiting user acceptance)");
@@ -259,7 +314,11 @@ const revaiController = async (req, res) => {
             assessment: assessmentData, // Return assessment data without saving
             transcript,
             keywordCounts,
-            scores
+            scores: finalScores,
+            keywordScores: keywordScores,
+            ragScores: ragScores || null,
+            ragSegments: ragSegments || null,
+            classificationMethod: assessmentData.classificationMethod
         });
     } catch (error) {
         console.error("=== ERROR PROCESSING AUDIO ===");

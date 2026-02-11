@@ -48,6 +48,19 @@ const assessmentSchema = new mongoose.Schema({
         literature: { type: Number, default: 0 },
         language: { type: Number, default: 0 }
     },
+    ragScores: {
+        type: mongoose.Schema.Types.Mixed,
+        required: false
+    },
+    ragSegments: {
+        type: [mongoose.Schema.Types.Mixed],
+        required: false
+    },
+    classificationMethod: {
+        type: String,
+        enum: ['keyword-only', 'hybrid'],
+        default: 'keyword-only'
+    },
     uploadedBy: { 
         type: String, 
         required: false 
