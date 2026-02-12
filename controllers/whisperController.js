@@ -115,6 +115,41 @@ const calculateScores = (counts) => {
     };
 };
 
+/**
+ * Extract segments from transcript by finding keyword matches.
+ * Used as fallback when RAG is disabled or fails, so transcripts are always highlighted.
+ * @param {string} transcript - Transcript text
+ * @returns {Array} Array of segment objects { text, category, startIndex, endIndex }
+ */
+const extractKeywordSegments = (transcript) => {
+    if (!transcript || typeof transcript !== 'string' || transcript.trim().length === 0) {
+        return [];
+    }
+
+    const segments = [];
+    const lowerTranscript = transcript.toLowerCase();
+
+    Object.keys(KEYWORDS).forEach(category => {
+        KEYWORDS[category].forEach(keyword => {
+            const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const pattern = keyword.includes(' ')
+                ? new RegExp(`\\b${escapedKeyword.replace(/\s+/g, '\\s+')}\\b`, 'gi')
+                : new RegExp(`\\b${escapedKeyword}\\b`, 'gi');
+            let match;
+            while ((match = pattern.exec(transcript)) !== null) {
+                segments.push({
+                    text: match[0],
+                    category,
+                    startIndex: match.index,
+                    endIndex: match.index + match[0].length
+                });
+            }
+        });
+    });
+
+    return segments;
+};
+
 const revaiController = async (req, res) => {
     let filePath = null;
     
@@ -255,6 +290,14 @@ const revaiController = async (req, res) => {
             }
         }
 
+        // Fallback: always generate segments for highlighting (keyword-based when RAG has none)
+        if (!ragSegments || ragSegments.length === 0) {
+            ragSegments = extractKeywordSegments(transcript || "");
+            if (ragSegments.length > 0) {
+                console.log("Using keyword-based segments for highlighting:", ragSegments.length, "segments");
+            }
+        }
+
         // Prepare assessment data (but don't save yet - wait for user acceptance)
         console.log("Preparing assessment data...");
         
@@ -285,13 +328,17 @@ const revaiController = async (req, res) => {
             date: assessmentDate
         };
 
-        // Optionally store RAG scores and segments for debugging/analysis
+        // Store RAG scores and segments (segments enable transcript highlighting)
         if (ragScores) {
             assessmentData.ragScores = ragScores;
             assessmentData.ragSegments = ragSegments;
             assessmentData.classificationMethod = 'hybrid';
         } else {
             assessmentData.classificationMethod = 'keyword-only';
+        }
+        // Always include segments when available (keyword-based fallback enables highlighting)
+        if (ragSegments && ragSegments.length > 0) {
+            assessmentData.ragSegments = ragSegments;
         }
 
         // Don't save yet - return data for user review
