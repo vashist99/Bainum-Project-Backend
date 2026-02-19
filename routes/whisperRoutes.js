@@ -5,7 +5,10 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import mongoose from 'mongoose';
 import revaiController from '../controllers/whisperController.js';
+import classroomWhisperController from '../controllers/classroomWhisperController.js';
 import Assessment from '../models/Assessment.js';
+import TeacherAssessment from '../models/TeacherAssessment.js';
+import authenticateToken from '../middleware/authMiddleware.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -70,6 +73,9 @@ const handleMulterError = (err, req, res, next) => {
 
 // Route to upload and process audio using RevAI
 router.post('/whisper', upload.single('audio'), handleMulterError, revaiController);
+
+// Route to upload and process classroom audio (teachers and admins only)
+router.post('/whisper/classroom', authenticateToken, upload.single('audio'), handleMulterError, classroomWhisperController);
 
 // Route to get all assessments for a child
 router.get('/assessments/child/:childId', async (req, res) => {
@@ -148,6 +154,89 @@ router.post('/assessments/accept', async (req, res) => {
         });
     } catch (error) {
         console.error("Error saving assessment:", error);
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// Route to get all teacher assessments (teachers can only access their own)
+router.get('/assessments/teacher/:teacherId', authenticateToken, async (req, res) => {
+    try {
+        const { teacherId } = req.params;
+        if (req.user.role === 'teacher' && String(req.user.id) !== String(teacherId)) {
+            return res.status(403).json({ message: "You can only access your own assessments" });
+        }
+        const assessments = await TeacherAssessment.find({ teacherId }).sort({ date: -1 });
+        res.status(200).json({ assessments });
+    } catch (error) {
+        console.error("Error fetching teacher assessments:", error);
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// Route to get latest teacher assessment (teachers can only access their own)
+router.get('/assessments/teacher/:teacherId/latest', authenticateToken, async (req, res) => {
+    try {
+        const { teacherId } = req.params;
+        if (req.user.role === 'teacher' && String(req.user.id) !== String(teacherId)) {
+            return res.status(403).json({ message: "You can only access your own assessments" });
+        }
+        const assessment = await TeacherAssessment.findOne({ teacherId }).sort({ date: -1 });
+
+        if (!assessment) {
+            return res.status(404).json({ message: "No assessments found for this teacher" });
+        }
+
+        res.status(200).json({ assessment });
+    } catch (error) {
+        console.error("Error fetching latest teacher assessment:", error);
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// Route to accept and save teacher assessment after transcript review
+router.post('/assessments/teacher/accept', authenticateToken, async (req, res) => {
+    try {
+        const { teacherId, audioFileName, transcript, scienceTalk, socialTalk, literatureTalk, languageDevelopment, keywordCounts, ragScores, ragSegments, classificationMethod, uploadedBy, date, center } = req.body;
+
+        if (!teacherId) {
+            return res.status(400).json({ message: "Teacher ID is required" });
+        }
+
+        const teacherIdObject = mongoose.Types.ObjectId.isValid(teacherId)
+            ? new mongoose.Types.ObjectId(teacherId)
+            : teacherId;
+
+        const assessment = new TeacherAssessment({
+            teacherId: teacherIdObject,
+            audioFileName: audioFileName || '',
+            transcript: transcript || '',
+            scienceTalk: scienceTalk || 0,
+            socialTalk: socialTalk || 0,
+            literatureTalk: literatureTalk || 0,
+            languageDevelopment: languageDevelopment || 0,
+            keywordCounts: keywordCounts || {
+                science: 0,
+                social: 0,
+                literature: 0,
+                language: 0
+            },
+            ragScores: ragScores || null,
+            ragSegments: ragSegments || null,
+            classificationMethod: classificationMethod || 'keyword-only',
+            uploadedBy: uploadedBy || "Unknown",
+            date: date ? new Date(date) : new Date(),
+            center: center || null
+        });
+
+        await assessment.save();
+        console.log("Teacher assessment saved after user acceptance");
+
+        res.status(201).json({
+            message: "Teacher assessment saved successfully",
+            assessment
+        });
+    } catch (error) {
+        console.error("Error saving teacher assessment:", error);
         res.status(500).json({ message: error.message });
     }
 });
