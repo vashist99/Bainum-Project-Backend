@@ -3,8 +3,7 @@ import fs from "fs";
 import mongoose from "mongoose";
 import revai from "../lib/revai.js";
 import ragClassifier from "../lib/ragClassifier.js";
-import hybridScorer from "../lib/hybridScorer.js";
-import { analyzeTranscript, calculateScores, extractKeywordSegments } from "../lib/transcriptProcessor.js";
+import { analyzeTranscript, extractKeywordSegments, computeCategoryWordCountFromSegments } from "../lib/transcriptProcessor.js";
 import { Teacher } from "../models/User.js";
 
 dotenv.config();
@@ -76,34 +75,32 @@ const classroomWhisperController = async (req, res) => {
 
         const keywordCounts = analyzeTranscript(transcript || "");
         const categoryWPM = { science: null, social: null, literature: null, language: null };
-        if (durationMinutes && keywordCounts) {
-            Object.keys(categoryWPM).forEach((cat) => {
-                const count = keywordCounts[cat] || 0;
-                categoryWPM[cat] = Math.round((count / durationMinutes) * 10) / 10;
-            });
-        }
-        const keywordScores = calculateScores(keywordCounts);
-
-        let ragScores = null;
-        let ragSegments = null;
-        let finalScores = keywordScores;
+        const categoryWordCount = { science: 0, social: 0, literature: 0, language: 0 };
         const ragEnabled = process.env.RAG_ENABLED?.toString().toLowerCase().trim() === 'true';
 
+        let ragSegments = null;
         if (ragEnabled && transcript && transcript.trim().length > 0) {
             try {
                 const ragResult = await ragClassifier.classifyWithSegments(transcript);
-                ragScores = ragResult.scores;
                 ragSegments = ragResult.segments || [];
-                finalScores = hybridScorer.combineScores(ragScores, keywordScores);
             } catch (ragError) {
                 console.error("RAG classification failed, falling back to keyword-only:", ragError.message);
-                ragScores = null;
-                ragSegments = null;
             }
         }
 
         if (!ragSegments || ragSegments.length === 0) {
             ragSegments = extractKeywordSegments(transcript || "");
+        }
+
+        if (ragSegments && ragSegments.length > 0) {
+            const counts = computeCategoryWordCountFromSegments(ragSegments);
+            Object.assign(categoryWordCount, counts);
+            if (durationMinutes && durationMinutes > 0) {
+                Object.keys(categoryWPM).forEach((cat) => {
+                    const words = categoryWordCount[cat] || 0;
+                    categoryWPM[cat] = Math.round((words / durationMinutes) * 10) / 10;
+                });
+            }
         }
 
         let assessmentDate = new Date();
@@ -118,30 +115,22 @@ const classroomWhisperController = async (req, res) => {
             teacherId: mongoose.Types.ObjectId.isValid(teacherId) ? new mongoose.Types.ObjectId(teacherId) : teacherId,
             audioFileName: req.file.filename,
             transcript: transcript || "",
-            scienceTalk: finalScores.scienceTalk,
-            socialTalk: finalScores.socialTalk,
-            literatureTalk: finalScores.literatureTalk,
-            languageDevelopment: finalScores.languageDevelopment,
+            scienceTalk: 0,
+            socialTalk: 0,
+            literatureTalk: 0,
+            languageDevelopment: 0,
             keywordCounts,
+            categoryWordCount,
             wordCount,
             durationSeconds,
             wordsPerMinute,
             categoryWPM,
             uploadedBy,
             date: assessmentDate,
-            center: center || null
+            center: center || null,
+            ragSegments: ragSegments || [],
+            classificationMethod: ragEnabled ? 'rag' : 'keyword-only'
         };
-
-        if (ragScores) {
-            assessmentData.ragScores = ragScores;
-            assessmentData.ragSegments = ragSegments;
-            assessmentData.classificationMethod = 'hybrid';
-        } else {
-            assessmentData.classificationMethod = 'keyword-only';
-        }
-        if (ragSegments && ragSegments.length > 0) {
-            assessmentData.ragSegments = ragSegments;
-        }
 
         if (fs.existsSync(filePath)) {
             try {
@@ -156,8 +145,7 @@ const classroomWhisperController = async (req, res) => {
             assessment: assessmentData,
             transcript,
             keywordCounts,
-            scores: finalScores,
-            ragScores: ragScores || null,
+            categoryWordCount,
             ragSegments: ragSegments || null,
             classificationMethod: assessmentData.classificationMethod
         });

@@ -110,7 +110,7 @@ router.get('/assessments/child/:childId/latest', async (req, res) => {
 // Route to accept and save assessment after transcript review
 router.post('/assessments/accept', async (req, res) => {
     try {
-        const { childId, audioFileName, transcript, scienceTalk, socialTalk, literatureTalk, languageDevelopment, keywordCounts, ragScores, ragSegments, classificationMethod, uploadedBy, date, wordCount, durationSeconds, wordsPerMinute, categoryWPM } = req.body;
+        const { childId, audioFileName, transcript, scienceTalk, socialTalk, literatureTalk, languageDevelopment, keywordCounts, categoryWordCount, ragScores, ragSegments, classificationMethod, uploadedBy, date, wordCount, durationSeconds, wordsPerMinute, categoryWPM } = req.body;
 
         if (!childId) {
             return res.status(400).json({ message: "Child ID is required" });
@@ -131,6 +131,12 @@ router.post('/assessments/accept', async (req, res) => {
             literatureTalk: literatureTalk || 0,
             languageDevelopment: languageDevelopment || 0,
             keywordCounts: keywordCounts || {
+                science: 0,
+                social: 0,
+                literature: 0,
+                language: 0
+            },
+            categoryWordCount: categoryWordCount || {
                 science: 0,
                 social: 0,
                 literature: 0,
@@ -161,6 +167,40 @@ router.post('/assessments/accept', async (req, res) => {
         });
     } catch (error) {
         console.error("Error saving assessment:", error);
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// Route to delete a child assessment (recalculates cohort thresholds)
+router.delete('/assessments/child/:assessmentId', authenticateToken, async (req, res) => {
+    try {
+        const { assessmentId } = req.params;
+        const user = req.user;
+
+        if (!mongoose.Types.ObjectId.isValid(assessmentId)) {
+            return res.status(400).json({ message: "Invalid assessment ID" });
+        }
+
+        const assessment = await Assessment.findById(assessmentId);
+        if (!assessment) {
+            return res.status(404).json({ message: "Assessment not found" });
+        }
+
+        // Admin can delete any; parent can only delete their own child's assessments
+        const childIdStr = assessment.childId?.toString();
+        const userChildId = user.childId?.toString?.() || (typeof user.childId === 'string' ? user.childId : null);
+        if (user.role !== 'admin' && (user.role !== 'parent' || userChildId !== childIdStr)) {
+            return res.status(403).json({ message: "You do not have permission to delete this assessment" });
+        }
+
+        await Assessment.findByIdAndDelete(assessmentId);
+        console.log("✓ Child assessment deleted:", assessmentId);
+
+        await recomputeAndSaveChildrenCohortStats().catch((err) => console.error("Failed to update children cohort stats:", err));
+
+        res.status(200).json({ message: "Assessment deleted successfully" });
+    } catch (error) {
+        console.error("Error deleting child assessment:", error);
         res.status(500).json({ message: error.message });
     }
 });
@@ -226,7 +266,7 @@ router.get('/assessments/teacher/:teacherId/latest', authenticateToken, async (r
 // Route to accept and save teacher assessment after transcript review
 router.post('/assessments/teacher/accept', authenticateToken, async (req, res) => {
     try {
-        const { teacherId, audioFileName, transcript, scienceTalk, socialTalk, literatureTalk, languageDevelopment, keywordCounts, ragScores, ragSegments, classificationMethod, uploadedBy, date, center, wordCount, durationSeconds, wordsPerMinute, categoryWPM } = req.body;
+        const { teacherId, audioFileName, transcript, scienceTalk, socialTalk, literatureTalk, languageDevelopment, keywordCounts, categoryWordCount, ragScores, ragSegments, classificationMethod, uploadedBy, date, center, wordCount, durationSeconds, wordsPerMinute, categoryWPM } = req.body;
 
         if (!teacherId) {
             return res.status(400).json({ message: "Teacher ID is required" });
@@ -245,6 +285,12 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
             literatureTalk: literatureTalk || 0,
             languageDevelopment: languageDevelopment || 0,
             keywordCounts: keywordCounts || {
+                science: 0,
+                social: 0,
+                literature: 0,
+                language: 0
+            },
+            categoryWordCount: categoryWordCount || {
                 science: 0,
                 social: 0,
                 literature: 0,
@@ -273,6 +319,40 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
         });
     } catch (error) {
         console.error("Error saving teacher assessment:", error);
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// Route to delete a teacher assessment (recalculates cohort thresholds)
+router.delete('/assessments/teacher/:assessmentId', authenticateToken, async (req, res) => {
+    try {
+        const { assessmentId } = req.params;
+        const user = req.user;
+
+        if (!mongoose.Types.ObjectId.isValid(assessmentId)) {
+            return res.status(400).json({ message: "Invalid assessment ID" });
+        }
+
+        const assessment = await TeacherAssessment.findById(assessmentId);
+        if (!assessment) {
+            return res.status(404).json({ message: "Assessment not found" });
+        }
+
+        // Admin can delete any; teacher can only delete their own
+        const teacherIdStr = assessment.teacherId?.toString();
+        const userIdStr = user.id?.toString?.() || (typeof user.id === 'string' ? user.id : null);
+        if (user.role !== 'admin' && (user.role !== 'teacher' || userIdStr !== teacherIdStr)) {
+            return res.status(403).json({ message: "You do not have permission to delete this assessment" });
+        }
+
+        await TeacherAssessment.findByIdAndDelete(assessmentId);
+        console.log("✓ Teacher assessment deleted:", assessmentId);
+
+        await recomputeAndSaveTeachersCohortStats().catch((err) => console.error("Failed to update teachers cohort stats:", err));
+
+        res.status(200).json({ message: "Assessment deleted successfully" });
+    } catch (error) {
+        console.error("Error deleting teacher assessment:", error);
         res.status(500).json({ message: error.message });
     }
 });

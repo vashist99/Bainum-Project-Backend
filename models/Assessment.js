@@ -48,6 +48,12 @@ const assessmentSchema = new mongoose.Schema({
         literature: { type: Number, default: 0 },
         language: { type: Number, default: 0 }
     },
+    categoryWordCount: {
+        science: { type: Number, default: 0 },
+        social: { type: Number, default: 0 },
+        literature: { type: Number, default: 0 },
+        language: { type: Number, default: 0 }
+    },
     ragScores: {
         type: mongoose.Schema.Types.Mixed,
         required: false
@@ -58,7 +64,7 @@ const assessmentSchema = new mongoose.Schema({
     },
     classificationMethod: {
         type: String,
-        enum: ['keyword-only', 'hybrid'],
+        enum: ['keyword-only', 'rag'],
         default: 'keyword-only'
     },
     uploadedBy: { 

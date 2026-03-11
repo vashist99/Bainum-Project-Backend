@@ -1,10 +1,8 @@
 import dotenv from "dotenv";
-import Assessment from "../models/Assessment.js";
 import fs from "fs";
 import revai from "../lib/revai.js";
 import ragClassifier from "../lib/ragClassifier.js";
-import hybridScorer from "../lib/hybridScorer.js";
-import { analyzeTranscript, calculateScores, extractKeywordSegments } from "../lib/transcriptProcessor.js";
+import { analyzeTranscript, extractKeywordSegments, computeCategoryWordCountFromSegments } from "../lib/transcriptProcessor.js";
 
 dotenv.config();
 
@@ -93,8 +91,9 @@ const revaiController = async (req, res) => {
             ? Math.round((wordCount / durationMinutes) * 10) / 10
             : null;
 
-        // Compute per-category WPM from keyword counts
+        // Per-category WPM computed from classified segment word counts
         const categoryWPM = { science: null, social: null, literature: null, language: null };
+        const categoryWordCount = { science: 0, social: 0, literature: 0, language: 0 };
         if (durationSeconds != null) {
             console.log(`Duration: ${durationSeconds}s, Word count: ${wordCount}, WPM: ${wordsPerMinute}`);
         }
@@ -102,78 +101,60 @@ const revaiController = async (req, res) => {
         // Validate transcript
         if (!transcript || transcript.trim().length === 0) {
             console.warn("⚠️  Empty transcript received from RevAI");
-            // Continue processing even with empty transcript
         }
 
-        // Analyze transcript for keywords
+        // Analyze transcript for keywords (used for keyword-only fallback)
         const keywordCounts = analyzeTranscript(transcript || "");
-        const keywordScores = calculateScores(keywordCounts);
 
-        // Compute per-category WPM when duration available
-        if (durationMinutes && keywordCounts) {
-            Object.keys(categoryWPM).forEach((cat) => {
-                const count = keywordCounts[cat] || 0;
-                categoryWPM[cat] = Math.round((count / durationMinutes) * 10) / 10;
-            });
-        }
-
-        console.log("=== Keyword Analysis Complete ===");
-        console.log("Transcript length:", transcript?.length || 0, "characters");
-        console.log("Total words in transcript:", transcript?.split(/\s+/).filter(w => w.length > 0).length || 0);
-        console.log("Keyword counts:", keywordCounts);
-        console.log("Keyword scores:", keywordScores);
-
-        // RAG Classification (if enabled)
-        let ragScores = null;
+        // RAG Classification (if enabled) - returns segments only, no scores
         let ragSegments = null;
-        let finalScores = keywordScores;
-        // Check RAG_ENABLED - handle string 'true', boolean true, or case variations
         const ragEnabledValue = process.env.RAG_ENABLED?.toString().toLowerCase().trim();
         const ragEnabled = ragEnabledValue === 'true';
-        
-        // Debug logging for RAG configuration
-        console.log("=== RAG Configuration Debug ===");
-        console.log("RAG_ENABLED env value:", process.env.RAG_ENABLED);
-        console.log("RAG_ENABLED normalized:", ragEnabledValue);
-        console.log("ragEnabled computed:", ragEnabled);
-        console.log("OPENAI_API_KEY set:", !!process.env.OPENAI_API_KEY);
+
+        console.log("=== RAG Configuration ===");
+        console.log("RAG_ENABLED:", ragEnabled, "OPENAI_API_KEY set:", !!process.env.OPENAI_API_KEY);
 
         if (ragEnabled && transcript && transcript.trim().length > 0) {
             try {
                 console.log("=== Starting RAG Classification ===");
                 const ragResult = await ragClassifier.classifyWithSegments(transcript);
-                ragScores = ragResult.scores;
                 ragSegments = ragResult.segments || [];
-                console.log("RAG scores:", ragScores);
                 console.log("RAG segments found:", ragSegments.length);
-
-                // Combine RAG and keyword scores using hybrid scorer
-                finalScores = hybridScorer.combineScores(ragScores, keywordScores);
-                console.log("=== Hybrid Scoring Complete ===");
-                console.log("Final combined scores:", finalScores);
-                console.log("Weights:", hybridScorer.getWeights());
             } catch (ragError) {
                 console.error("⚠️  RAG classification failed, falling back to keyword-only:", ragError.message);
-                // Use keyword scores as fallback
-                finalScores = keywordScores;
-                ragScores = null;
                 ragSegments = null;
             }
+        } else if (!ragEnabled) {
+            console.log("RAG classification is disabled");
         } else {
-            if (!ragEnabled) {
-                console.log("RAG classification is disabled (RAG_ENABLED=false or not set)");
-            } else {
-                console.log("Skipping RAG classification (empty transcript)");
-            }
+            console.log("Skipping RAG classification (empty transcript)");
         }
 
-        // Fallback: always generate segments for highlighting (keyword-based when RAG has none)
+        // Fallback: keyword-based segments when RAG has none
         if (!ragSegments || ragSegments.length === 0) {
             ragSegments = extractKeywordSegments(transcript || "");
             if (ragSegments.length > 0) {
-                console.log("Using keyword-based segments for highlighting:", ragSegments.length, "segments");
+                console.log("Using keyword-based segments:", ragSegments.length);
             }
         }
+
+        // Compute category word counts from segments (deduped) and WPM
+        if (ragSegments && ragSegments.length > 0) {
+            const counts = computeCategoryWordCountFromSegments(ragSegments);
+            Object.assign(categoryWordCount, counts);
+            if (durationMinutes && durationMinutes > 0) {
+                Object.keys(categoryWPM).forEach((cat) => {
+                    const words = categoryWordCount[cat] || 0;
+                    categoryWPM[cat] = Math.round((words / durationMinutes) * 10) / 10;
+                });
+            }
+        }
+
+        console.log("=== Classification Complete ===");
+        console.log("Transcript length:", transcript?.length || 0, "characters");
+        console.log("Keyword counts:", keywordCounts);
+        console.log("Category word counts:", categoryWordCount);
+        console.log("Category WPM:", categoryWPM);
 
         // Prepare assessment data (but don't save yet - wait for user acceptance)
         console.log("Preparing assessment data...");
@@ -196,31 +177,21 @@ const revaiController = async (req, res) => {
             childId,
             audioFileName: req.file.filename,
             transcript: transcript || "",
-            scienceTalk: finalScores.scienceTalk,
-            socialTalk: finalScores.socialTalk,
-            literatureTalk: finalScores.literatureTalk,
-            languageDevelopment: finalScores.languageDevelopment,
+            scienceTalk: 0,
+            socialTalk: 0,
+            literatureTalk: 0,
+            languageDevelopment: 0,
             keywordCounts,
+            categoryWordCount,
             wordCount,
             durationSeconds,
             wordsPerMinute,
             categoryWPM,
             uploadedBy: uploadedBy || "Unknown",
-            date: assessmentDate
+            date: assessmentDate,
+            ragSegments: ragSegments || [],
+            classificationMethod: ragEnabled ? 'rag' : 'keyword-only'
         };
-
-        // Store RAG scores and segments (segments enable transcript highlighting)
-        if (ragScores) {
-            assessmentData.ragScores = ragScores;
-            assessmentData.ragSegments = ragSegments;
-            assessmentData.classificationMethod = 'hybrid';
-        } else {
-            assessmentData.classificationMethod = 'keyword-only';
-        }
-        // Always include segments when available (keyword-based fallback enables highlighting)
-        if (ragSegments && ragSegments.length > 0) {
-            assessmentData.ragSegments = ragSegments;
-        }
 
         // Don't save yet - return data for user review
         console.log("✓ Assessment data prepared (awaiting user acceptance)");
@@ -239,12 +210,10 @@ const revaiController = async (req, res) => {
         
         res.status(200).json({
             message: "Audio processed successfully - please review transcript",
-            assessment: assessmentData, // Return assessment data without saving
+            assessment: assessmentData,
             transcript,
             keywordCounts,
-            scores: finalScores,
-            keywordScores: keywordScores,
-            ragScores: ragScores || null,
+            categoryWordCount,
             ragSegments: ragSegments || null,
             classificationMethod: assessmentData.classificationMethod
         });
