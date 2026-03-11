@@ -28,10 +28,7 @@ const knowledgeBaseEmbeddingSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// Index for faster category-based queries
-knowledgeBaseEmbeddingSchema.index({ category: 1 });
-
-// Compound index for category and text searches
+// Compound index for category and text searches (category index is via field-level index: true)
 knowledgeBaseEmbeddingSchema.index({ category: 1, text: 1 });
 
 const KnowledgeBaseEmbedding = mongoose.model("KnowledgeBaseEmbedding", knowledgeBaseEmbeddingSchema);

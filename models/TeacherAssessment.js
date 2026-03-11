@@ -1,9 +1,9 @@
 import mongoose from "mongoose";
 
-const assessmentSchema = new mongoose.Schema({
-    childId: { 
+const teacherAssessmentSchema = new mongoose.Schema({
+    teacherId: { 
         type: mongoose.Schema.Types.ObjectId, 
-        ref: "Child", 
+        ref: "Teacher", 
         required: true 
     },
     date: { 
@@ -65,6 +65,10 @@ const assessmentSchema = new mongoose.Schema({
         type: String, 
         required: false 
     },
+    center: { 
+        type: String, 
+        required: false 
+    },
     wordCount: { type: Number, default: null },
     durationSeconds: { type: Number, default: null },
     wordsPerMinute: { type: Number, default: null },
@@ -74,7 +78,10 @@ const assessmentSchema = new mongoose.Schema({
         literature: { type: Number, default: null },
         language: { type: Number, default: null }
     }
+}, {
+    timestamps: true
 });
 
-const Assessment = mongoose.model("Assessment", assessmentSchema);
-export default Assessment;
+const TeacherAssessment = mongoose.model("TeacherAssessment", teacherAssessmentSchema);
+
+export default TeacherAssessment;

@@ -45,7 +45,7 @@ export const register = async (req, res) => {
             role: user.role,
         };
 
-        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
 
         await user.save();
 
@@ -138,7 +138,7 @@ export const login = async (req, res) => {
             userResponse.childId = user.childId.toString ? user.childId.toString() : String(user.childId);
         }
 
-        const token = jwt.sign(userResponse, process.env.JWT_SECRET, { expiresIn: '1h' });
+        const token = jwt.sign(userResponse, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
 
 
         res.status(200).json({
@@ -240,7 +240,7 @@ export const registerParent = async (req, res) => {
 
         await parent.save();
 
-        const token = jwt.sign(parent, process.env.JWT_SECRET, { expiresIn: '1h' });
+        const token = jwt.sign(parent, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
 
         // Update invitation status
         invitation.status = 'accepted';
@@ -341,7 +341,7 @@ export const registerTeacher = async (req, res) => {
             role: teacher.role,
         };
 
-        const token = jwt.sign(userResponse, process.env.JWT_SECRET, { expiresIn: '1h' });
+        const token = jwt.sign(userResponse, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
 
         // Update invitation status
         invitation.status = 'accepted';

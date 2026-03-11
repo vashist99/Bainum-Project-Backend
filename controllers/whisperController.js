@@ -4,116 +4,9 @@ import fs from "fs";
 import revai from "../lib/revai.js";
 import ragClassifier from "../lib/ragClassifier.js";
 import hybridScorer from "../lib/hybridScorer.js";
+import { analyzeTranscript, calculateScores, extractKeywordSegments } from "../lib/transcriptProcessor.js";
 
 dotenv.config();
-
-// Comprehensive keyword lists for each category
-const KEYWORDS = {
-    science: [
-        "experiment", "hypothesis", "observe", "predict", "measure", "test", "data", "result",
-        "science", "scientist", "discover", "investigate", "analyze", "research", "study",
-        "evidence", "theory", "fact", "prove", "conclusion", "question", "answer", "why",
-        "how", "what", "when", "where", "because", "reason", "cause", "effect", "change",
-        "grow", "plant", "animal", "nature", "weather", "water", "air", "earth", "space",
-        "star", "planet", "moon", "sun", "light", "dark", "hot", "cold", "big", "small",
-        "heavy", "light", "fast", "slow", "up", "down", "inside", "outside", "color",
-        "shape", "size", "number", "count", "more", "less", "same", "different"
-    ],
-    social: [
-        "friend", "share", "help", "together", "feelings", "happy", "sad", "angry", "excited",
-        "scared", "worried", "proud", "sorry", "thank", "please", "welcome", "hello", "goodbye",
-        "play", "game", "fun", "laugh", "smile", "cry", "hug", "love", "care", "kind",
-        "nice", "mean", "fair", "unfair", "right", "wrong", "good", "bad", "yes", "no",
-        "maybe", "okay", "sure", "family", "mom", "dad", "parent", "brother", "sister",
-        "baby", "child", "people", "person", "group", "team", "class", "school", "teacher",
-        "student", "learn", "teach", "listen", "talk", "say", "tell", "ask", "answer",
-        "understand", "know", "think", "remember", "forget", "want", "need", "like", "dislike"
-    ],
-    literature: [
-        "story", "character", "beginning", "ending", "imagine", "pretend", "make-believe",
-        "fairy tale", "tale", "book", "read", "page", "chapter", "title", "author", "writer",
-        "write", "draw", "picture", "illustration", "drawing", "art", "create", "make",
-        "once upon a time", "once", "long ago", "happily ever after", "the end", "begin",
-        "start", "finish", "end", "first", "last", "next", "then", "after", "before",
-        "prince", "princess", "king", "queen", "castle", "dragon", "magic", "wizard",
-        "witch", "fairy", "giant", "dwarf", "hero", "villain", "adventure", "journey",
-        "travel", "visit", "go", "come", "arrive", "leave", "return", "home", "place",
-        "where", "there", "here", "far", "near", "find", "lose", "search", "look", "see",
-        "watch", "show", "hide", "appear", "disappear", "magic", "wish", "dream", "hope"
-    ],
-    language: [
-        "word", "sentence", "speak", "listen", "communicate", "talk", "say", "tell",
-        "speech", "language", "voice", "sound", "noise", "quiet", "loud", "soft",
-        "whisper", "shout", "yell", "call", "name", "label", "describe", "explain",
-        "mean", "meaning", "understand", "comprehend", "know", "learn", "teach",
-        "question", "ask", "answer", "reply", "respond", "conversation", "discuss",
-        "chat", "talk", "speak", "say", "tell", "speech", "pronounce", "pronunciation",
-        "letter", "alphabet", "read", "write", "spell", "spelling", "grammar", "noun",
-        "verb", "adjective", "sentence", "phrase", "paragraph", "story", "book",
-        "dictionary", "vocabulary", "word", "term", "expression", "idiom", "phrase"
-    ]
-};
-
-// Function to count keywords in transcript
-const analyzeTranscript = (transcript) => {
-    if (!transcript || typeof transcript !== 'string' || transcript.trim().length === 0) {
-        console.warn("Empty or invalid transcript provided for analysis");
-        return {
-            science: 0,
-            social: 0,
-            literature: 0,
-            language: 0
-        };
-    }
-
-    const lowerTranscript = transcript.toLowerCase();
-    const counts = {
-        science: 0,
-        social: 0,
-        literature: 0,
-        language: 0
-    };
-
-    // Count occurrences of each keyword
-    Object.keys(KEYWORDS).forEach(category => {
-        KEYWORDS[category].forEach(keyword => {
-            // Handle multi-word keywords (like "once upon a time", "fairy tale")
-            if (keyword.includes(' ')) {
-                // For multi-word phrases, count exact matches (case-insensitive)
-                const phraseRegex = new RegExp(`\\b${keyword.replace(/\s+/g, '\\s+')}\\b`, 'gi');
-                const phraseMatches = lowerTranscript.match(phraseRegex);
-                if (phraseMatches) {
-                    counts[category] += phraseMatches.length;
-                }
-            } else {
-                // For single words, use word boundaries to match whole words only
-            const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
-            const matches = lowerTranscript.match(regex);
-            if (matches) {
-                counts[category] += matches.length;
-                }
-            }
-        });
-    });
-
-    const totalMatches = counts.science + counts.social + counts.literature + counts.language;
-    console.log(`Keyword analysis: Found ${totalMatches} total keyword matches (Science: ${counts.science}, Social: ${counts.social}, Literature: ${counts.literature}, Language: ${counts.language})`);
-
-    return counts;
-};
-
-// Calculate percentage scores based on keyword counts
-const calculateScores = (counts) => {
-    // Simple scoring: each keyword occurrence adds points, capped at 100
-    const maxPerCategory = 20; // Max expected keywords per category
-    
-    return {
-        scienceTalk: Math.min(100, Math.round((counts.science / maxPerCategory) * 100)),
-        socialTalk: Math.min(100, Math.round((counts.social / maxPerCategory) * 100)),
-        literatureTalk: Math.min(100, Math.round((counts.literature / maxPerCategory) * 100)),
-        languageDevelopment: Math.min(100, Math.round((counts.language / maxPerCategory) * 100))
-    };
-};
 
 const revaiController = async (req, res) => {
     let filePath = null;
@@ -193,7 +86,18 @@ const revaiController = async (req, res) => {
         });
         
         const transcript = revai.getTranscript(transcriptionResult);
-        console.log(`Transcript extracted (${transcript.length} characters):`, transcript.substring(0, 100) + "...");
+        const durationSeconds = transcriptionResult?.durationSeconds ?? null;
+        const wordCount = (transcript || '').split(/\s+/).filter(w => w.length > 0).length;
+        const durationMinutes = durationSeconds && durationSeconds > 0 ? durationSeconds / 60 : null;
+        const wordsPerMinute = durationMinutes
+            ? Math.round((wordCount / durationMinutes) * 10) / 10
+            : null;
+
+        // Compute per-category WPM from keyword counts
+        const categoryWPM = { science: null, social: null, literature: null, language: null };
+        if (durationSeconds != null) {
+            console.log(`Duration: ${durationSeconds}s, Word count: ${wordCount}, WPM: ${wordsPerMinute}`);
+        }
 
         // Validate transcript
         if (!transcript || transcript.trim().length === 0) {
@@ -204,6 +108,14 @@ const revaiController = async (req, res) => {
         // Analyze transcript for keywords
         const keywordCounts = analyzeTranscript(transcript || "");
         const keywordScores = calculateScores(keywordCounts);
+
+        // Compute per-category WPM when duration available
+        if (durationMinutes && keywordCounts) {
+            Object.keys(categoryWPM).forEach((cat) => {
+                const count = keywordCounts[cat] || 0;
+                categoryWPM[cat] = Math.round((count / durationMinutes) * 10) / 10;
+            });
+        }
 
         console.log("=== Keyword Analysis Complete ===");
         console.log("Transcript length:", transcript?.length || 0, "characters");
@@ -255,6 +167,14 @@ const revaiController = async (req, res) => {
             }
         }
 
+        // Fallback: always generate segments for highlighting (keyword-based when RAG has none)
+        if (!ragSegments || ragSegments.length === 0) {
+            ragSegments = extractKeywordSegments(transcript || "");
+            if (ragSegments.length > 0) {
+                console.log("Using keyword-based segments for highlighting:", ragSegments.length, "segments");
+            }
+        }
+
         // Prepare assessment data (but don't save yet - wait for user acceptance)
         console.log("Preparing assessment data...");
         
@@ -281,17 +201,25 @@ const revaiController = async (req, res) => {
             literatureTalk: finalScores.literatureTalk,
             languageDevelopment: finalScores.languageDevelopment,
             keywordCounts,
+            wordCount,
+            durationSeconds,
+            wordsPerMinute,
+            categoryWPM,
             uploadedBy: uploadedBy || "Unknown",
             date: assessmentDate
         };
 
-        // Optionally store RAG scores and segments for debugging/analysis
+        // Store RAG scores and segments (segments enable transcript highlighting)
         if (ragScores) {
             assessmentData.ragScores = ragScores;
             assessmentData.ragSegments = ragSegments;
             assessmentData.classificationMethod = 'hybrid';
         } else {
             assessmentData.classificationMethod = 'keyword-only';
+        }
+        // Always include segments when available (keyword-based fallback enables highlighting)
+        if (ragSegments && ragSegments.length > 0) {
+            assessmentData.ragSegments = ragSegments;
         }
 
         // Don't save yet - return data for user review
