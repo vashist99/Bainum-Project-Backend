@@ -66,6 +66,14 @@ const revaiController = async (req, res) => {
             console.warn("⚠️  Could not check RevAI service health:", healthError.message);
         }
 
+        // AbortController: when client cancels (e.g. Cancel button), stop polling immediately
+        // Note: RevAI does not support cancelling in-progress jobs; we stop our backend work to save resources
+        const abortController = new AbortController();
+        req.on('aborted', () => abortController.abort());
+        req.on('close', () => {
+            if (!res.headersSent) abortController.abort();
+        });
+
         // Transcribe audio using RevAI
         console.log(`Starting transcription for file: ${req.file.filename}`);
         
@@ -74,7 +82,8 @@ const revaiController = async (req, res) => {
             filename: req.file.filename,
             mimetype: req.file.mimetype,
             skipDiarization: true, // Skip speaker diarization for faster processing
-            language: 'en' // Specify language for faster processing
+            language: 'en', // Specify language for faster processing
+            signal: abortController.signal
         });
 
         console.log("RevAI Response received:", {
@@ -159,16 +168,23 @@ const revaiController = async (req, res) => {
         // Prepare assessment data (but don't save yet - wait for user acceptance)
         console.log("Preparing assessment data...");
         
-        // Use provided recordingDate or default to current date
+        // Use provided recordingDate or default to current date (must be current year, up to today)
         let assessmentDate = new Date();
         if (recordingDate) {
             const parsedDate = new Date(recordingDate);
-            if (!isNaN(parsedDate.getTime())) {
-                assessmentDate = parsedDate;
-                console.log("Using provided recording date:", assessmentDate.toISOString());
-            } else {
-                console.warn("Invalid recordingDate provided, using current date");
+            if (isNaN(parsedDate.getTime())) {
+                return res.status(400).json({ message: "Invalid recording date" });
             }
+            const now = new Date();
+            const currentYear = now.getFullYear();
+            if (parsedDate.getFullYear() !== currentYear) {
+                return res.status(400).json({ message: "Recording date must be in the current year" });
+            }
+            if (parsedDate > now) {
+                return res.status(400).json({ message: "Recording date cannot be in the future" });
+            }
+            assessmentDate = parsedDate;
+            console.log("Using provided recording date:", assessmentDate.toISOString());
         } else {
             console.log("No recordingDate provided, using current date");
         }
@@ -218,6 +234,20 @@ const revaiController = async (req, res) => {
             classificationMethod: assessmentData.classificationMethod
         });
     } catch (error) {
+        // Client cancelled (Cancel button) - stop processing; don't log as error
+        if (error.message?.includes('cancelled') || error.message?.includes('Processing cancelled by client')) {
+            console.log("Audio processing cancelled by client");
+            if (filePath && fs.existsSync(filePath)) {
+                try {
+                    fs.unlinkSync(filePath);
+                } catch (e) { /* ignore */ }
+            }
+            if (!res.headersSent) {
+                return res.status(499).json({ message: "Processing cancelled" });
+            }
+            return;
+        }
+
         console.error("=== ERROR PROCESSING AUDIO ===");
         console.error("Error type:", error.constructor.name);
         console.error("Error message:", error.message);

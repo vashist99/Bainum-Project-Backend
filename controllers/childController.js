@@ -9,6 +9,14 @@ export const createChild = async (req, res) => {
             return res.status(400).json({ message: "All fields are required" });
         }
 
+        // Validate child age must be 8 years or below
+        const dob = new Date(dateOfBirth);
+        const cutoff = new Date();
+        cutoff.setFullYear(cutoff.getFullYear() - 8);
+        if (isNaN(dob.getTime()) || dob < cutoff) {
+            return res.status(400).json({ message: "Child must be 8 years old or younger" });
+        }
+
         // Create new child
         const child = new Child({
             name,
@@ -86,6 +94,14 @@ export const updateChild = async (req, res) => {
         // Validate required fields
         if (!name || !dateOfBirth || !gender || !diagnosis || !primaryLanguage || !leadTeacher) {
             return res.status(400).json({ message: "All fields are required" });
+        }
+
+        // Validate child age must be 8 years or below
+        const dob = new Date(dateOfBirth);
+        const cutoff = new Date();
+        cutoff.setFullYear(cutoff.getFullYear() - 8);
+        if (isNaN(dob.getTime()) || dob < cutoff) {
+            return res.status(400).json({ message: "Child must be 8 years old or younger" });
         }
 
         // Check if child exists

@@ -1,7 +1,11 @@
 import mongoose from "mongoose";
 
+// Username format: 3-30 chars, lowercase alphanumeric + underscore
+const usernameRegex = /^[a-z0-9_]{3,30}$/;
+
 const adminSchema = new mongoose.Schema({
     name: { type: String, required: true },
+    username: { type: String, unique: true, sparse: true, lowercase: true, trim: true, match: [usernameRegex, 'Username must be 3-30 chars, lowercase letters, numbers, underscore'] },
     email: { type: String, required: true, unique: true },
     role: { type: String, required: true, enum: ["admin"] },
     password: { type: String, required: true },
@@ -9,6 +13,7 @@ const adminSchema = new mongoose.Schema({
 
 const teacherSchema = new mongoose.Schema({
     name: { type: String, required: true },
+    username: { type: String, unique: true, sparse: true, lowercase: true, trim: true, match: [usernameRegex, 'Username must be 3-30 chars, lowercase letters, numbers, underscore'] },
     email: { type: String, required: true, unique: true },
     role: { type: String, required: true, enum: ["teacher"] },
     password: { type: String, required: true },
@@ -19,6 +24,7 @@ const teacherSchema = new mongoose.Schema({
 
 const parentSchema = new mongoose.Schema({
     name: { type: String, required: true },
+    username: { type: String, unique: true, sparse: true, lowercase: true, trim: true, match: [usernameRegex, 'Username must be 3-30 chars, lowercase letters, numbers, underscore'] },
     email: { type: String, required: true, unique: true },
     role: { type: String, required: true, enum: ["parent"] },
     password: { type: String, required: true },

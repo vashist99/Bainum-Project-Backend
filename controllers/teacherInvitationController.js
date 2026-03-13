@@ -40,6 +40,17 @@ export const sendTeacherInvitation = async (req, res) => {
             });
         }
 
+        // Validate teacher date of birth: age must be 21 or above
+        const dob = new Date(dateOfBirth);
+        if (isNaN(dob.getTime())) {
+            return res.status(400).json({ message: "Invalid date of birth" });
+        }
+        const cutoff21 = new Date();
+        cutoff21.setFullYear(cutoff21.getFullYear() - 21);
+        if (dob > cutoff21) {
+            return res.status(400).json({ message: "Teacher must be at least 21 years old" });
+        }
+
         // Check if teacher with this email already exists
         // Allow invitations for existing teachers (for re-invitation or account recovery)
         const existingTeacher = await Teacher.findOne({ email: email.toLowerCase() });

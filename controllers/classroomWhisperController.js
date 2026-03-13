@@ -58,11 +58,19 @@ const classroomWhisperController = async (req, res) => {
             console.warn("RevAI API key not set - transcription may fail");
         }
 
+        // AbortController: when client cancels, stop polling immediately
+        const abortController = new AbortController();
+        req.on('aborted', () => abortController.abort());
+        req.on('close', () => {
+            if (!res.headersSent) abortController.abort();
+        });
+
         const transcriptionResult = await revai.transcribeFromFile(filePath, {
             filename: req.file.filename,
             mimetype: req.file.mimetype,
             skipDiarization: true,
-            language: 'en'
+            language: 'en',
+            signal: abortController.signal
         });
 
         const transcript = revai.getTranscript(transcriptionResult);
@@ -106,9 +114,18 @@ const classroomWhisperController = async (req, res) => {
         let assessmentDate = new Date();
         if (recordingDate) {
             const parsedDate = new Date(recordingDate);
-            if (!isNaN(parsedDate.getTime())) {
-                assessmentDate = parsedDate;
+            if (isNaN(parsedDate.getTime())) {
+                return res.status(400).json({ message: "Invalid recording date" });
             }
+            const now = new Date();
+            const currentYear = now.getFullYear();
+            if (parsedDate.getFullYear() !== currentYear) {
+                return res.status(400).json({ message: "Recording date must be in the current year" });
+            }
+            if (parsedDate > now) {
+                return res.status(400).json({ message: "Recording date cannot be in the future" });
+            }
+            assessmentDate = parsedDate;
         }
 
         const assessmentData = {
@@ -150,6 +167,17 @@ const classroomWhisperController = async (req, res) => {
             classificationMethod: assessmentData.classificationMethod
         });
     } catch (error) {
+        if (error.message?.includes('cancelled') || error.message?.includes('Processing cancelled by client')) {
+            console.log("Classroom audio processing cancelled by client");
+            if (filePath && fs.existsSync(filePath)) {
+                try { fs.unlinkSync(filePath); } catch (e) { /* ignore */ }
+            }
+            if (!res.headersSent) {
+                return res.status(499).json({ message: "Processing cancelled" });
+            }
+            return;
+        }
+
         console.error("Classroom audio processing error:", error);
 
         if (filePath && fs.existsSync(filePath)) {

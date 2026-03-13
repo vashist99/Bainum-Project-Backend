@@ -17,13 +17,36 @@ const generateDefaultPassword = () => {
     return alphanumeric.padEnd(8, '0') + Math.floor(Math.random() * 10);
 };
 
+/** Validate username format: 3-30 chars, lowercase alphanumeric + underscore */
+const validateUsername = (u) => /^[a-z0-9_]{3,30}$/.test((u || '').toLowerCase().trim());
+
 export const createTeacher = async (req, res) => {
     try {
-        const { name, email, password, center, education, dateOfBirth } = req.body;
+        const { name, email, password, center, education, dateOfBirth, username } = req.body;
 
         // Validate required fields (password is now optional)
         if (!name || !email || !center || !education || !dateOfBirth) {
             return res.status(400).json({ message: "All fields except password are required" });
+        }
+
+        if (!username || !validateUsername(username)) {
+            return res.status(400).json({ message: "Username is required (3-30 chars, lowercase letters, numbers, underscore only)" });
+        }
+
+        const cleanUsername = username.toLowerCase().trim();
+
+        // Check if username is already taken
+        const existingByUsername = await Teacher.findOne({ username: cleanUsername });
+        if (existingByUsername) {
+            return res.status(400).json({ message: "Username is already taken" });
+        }
+
+        // Validate teacher age must be 21 or above
+        const dob = new Date(dateOfBirth);
+        const cutoff = new Date();
+        cutoff.setFullYear(cutoff.getFullYear() - 21);
+        if (isNaN(dob.getTime()) || dob > cutoff) {
+            return res.status(400).json({ message: "Teacher must be 21 years or older" });
         }
 
         // Check if teacher with this email already exists
@@ -43,6 +66,7 @@ export const createTeacher = async (req, res) => {
         const teacher = new Teacher({
             name,
             email,
+            username: cleanUsername,
             role: "teacher",
             password: hashedPassword,
             center,
@@ -82,9 +106,15 @@ export const getAllTeachers = async (req, res) => {
     }
 };
 
+/** Check if string looks like MongoDB ObjectId (24 hex chars) */
+const isObjectId = (s) => /^[a-fA-F0-9]{24}$/.test(s);
+
 export const getTeacherById = async (req, res) => {
     try {
-        const teacher = await Teacher.findById(req.params.id);
+        const { id } = req.params;
+        const teacher = isObjectId(id)
+            ? await Teacher.findById(id)
+            : await Teacher.findOne({ username: id.toLowerCase().trim() });
         if (!teacher) {
             return res.status(404).json({ message: "Teacher not found" });
         }
@@ -97,7 +127,7 @@ export const getTeacherById = async (req, res) => {
 
 export const updateTeacher = async (req, res) => {
     try {
-        const { name, email, center, education, dateOfBirth } = req.body;
+        const { name, email, center, education, dateOfBirth, username } = req.body;
         const { id } = req.params;
 
         // Validate required fields
@@ -105,8 +135,18 @@ export const updateTeacher = async (req, res) => {
             return res.status(400).json({ message: "All fields are required" });
         }
 
-        // Check if teacher exists
-        const teacher = await Teacher.findById(id);
+        // Validate teacher age must be 21 or above
+        const dob = new Date(dateOfBirth);
+        const cutoff = new Date();
+        cutoff.setFullYear(cutoff.getFullYear() - 21);
+        if (isNaN(dob.getTime()) || dob > cutoff) {
+            return res.status(400).json({ message: "Teacher must be 21 years or older" });
+        }
+
+        // Check if teacher exists (by id or username)
+        const teacher = isObjectId(id)
+            ? await Teacher.findById(id)
+            : await Teacher.findOne({ username: id.toLowerCase().trim() });
         if (!teacher) {
             return res.status(404).json({ message: "Teacher not found" });
         }
@@ -116,6 +156,21 @@ export const updateTeacher = async (req, res) => {
             const existingTeacher = await Teacher.findOne({ email });
             if (existingTeacher) {
                 return res.status(400).json({ message: "Teacher with this email already exists" });
+            }
+        }
+
+        // Update username if provided and valid
+        if (username !== undefined) {
+            if (!validateUsername(username)) {
+                return res.status(400).json({ message: "Username must be 3-30 chars, lowercase letters, numbers, underscore only" });
+            }
+            const cleanUsername = username.toLowerCase().trim();
+            if (cleanUsername !== (teacher.username || '')) {
+                const existingByUsername = await Teacher.findOne({ username: cleanUsername });
+                if (existingByUsername) {
+                    return res.status(400).json({ message: "Username is already taken" });
+                }
+                teacher.username = cleanUsername;
             }
         }
 
@@ -134,6 +189,7 @@ export const updateTeacher = async (req, res) => {
                 id: teacher._id,
                 name: teacher.name,
                 email: teacher.email,
+                username: teacher.username,
                 role: teacher.role,
                 center: teacher.center,
                 education: teacher.education,
@@ -148,7 +204,14 @@ export const updateTeacher = async (req, res) => {
 
 export const deleteTeacher = async (req, res) => {
     try {
-        const teacher = await Teacher.findByIdAndDelete(req.params.id);
+        const { id } = req.params;
+        const found = isObjectId(id)
+            ? await Teacher.findById(id)
+            : await Teacher.findOne({ username: id.toLowerCase().trim() });
+        if (!found) {
+            return res.status(404).json({ message: "Teacher not found" });
+        }
+        const teacher = await Teacher.findByIdAndDelete(found._id);
         if (!teacher) {
             return res.status(404).json({ message: "Teacher not found" });
         }
