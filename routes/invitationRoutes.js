@@ -6,8 +6,8 @@ const router = express.Router();
 // Send invitation (admin/teacher only)
 router.post('/send', authenticateToken, sendInvitation);
 
-// Verify invitation token (public endpoint)
-router.get('/verify/:token', authenticateToken, verifyInvitation);
+// Verify invitation token (public endpoint - no auth required; parents are unauthenticated)
+router.get('/verify/:token', verifyInvitation);
 
 // Get all invitations (admin/teacher only)
 router.get('/list', authenticateToken, getInvitations);

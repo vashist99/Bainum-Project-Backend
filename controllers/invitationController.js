@@ -160,6 +160,7 @@ export const verifyInvitation = async (req, res) => {
         const invitation = await Invitation.findOne({ token }).populate('childId');
 
         if (!invitation) {
+            console.log("[Invitation] Verify failed: token not found in DB", { tokenLength: token?.length, hasAuthHeader: !!req.headers?.authorization });
             return res.status(404).json({ 
                 message: "Invalid invitation token" 
             });
@@ -180,6 +181,7 @@ export const verifyInvitation = async (req, res) => {
         }
 
         // Return invitation details (without sensitive info)
+        console.log("[Invitation] Verify success", { childId: invitation.childId?._id, email: invitation.email });
         res.status(200).json({
             valid: true,
             invitation: {

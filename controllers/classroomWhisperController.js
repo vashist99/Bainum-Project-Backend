@@ -3,7 +3,7 @@ import fs from "fs";
 import mongoose from "mongoose";
 import revai from "../lib/revai.js";
 import ragClassifier from "../lib/ragClassifier.js";
-import { analyzeTranscript, extractKeywordSegments, computeCategoryWordCountFromSegments } from "../lib/transcriptProcessor.js";
+import { analyzeTranscript, extractKeywordSegments, computeCategoryWordCountFromSegments, deriveCategoryWordCountFromKeywordCounts } from "../lib/transcriptProcessor.js";
 import { Teacher } from "../models/User.js";
 
 dotenv.config();
@@ -87,29 +87,52 @@ const classroomWhisperController = async (req, res) => {
         const ragEnabled = process.env.RAG_ENABLED?.toString().toLowerCase().trim() === 'true';
 
         let ragSegments = null;
+        let classificationMethod = ragEnabled ? 'rag' : 'keyword-only';
         if (ragEnabled && transcript && transcript.trim().length > 0) {
             try {
                 const ragResult = await ragClassifier.classifyWithSegments(transcript);
                 ragSegments = ragResult.segments || [];
             } catch (ragError) {
-                console.error("RAG classification failed, falling back to keyword-only:", ragError.message);
+                console.error("[RAG] Classification failed, falling back to keyword-only:", ragError.message);
             }
         }
 
         if (!ragSegments || ragSegments.length === 0) {
             ragSegments = extractKeywordSegments(transcript || "");
+            if (ragSegments.length > 0) {
+                console.log("[RAG] Using keyword-based segments:", ragSegments.length);
+            } else if (Object.values(keywordCounts).some((v) => v > 0)) {
+                const fallbackCounts = deriveCategoryWordCountFromKeywordCounts(keywordCounts);
+                Object.assign(categoryWordCount, fallbackCounts);
+                classificationMethod = 'keyword-only';
+                console.warn("[RAG] No segments from RAG or keyword extractor, but keywordCounts present; using keywordCounts fallback for WPM");
+            }
         }
 
         if (ragSegments && ragSegments.length > 0) {
             const counts = computeCategoryWordCountFromSegments(ragSegments);
             Object.assign(categoryWordCount, counts);
-            if (durationMinutes && durationMinutes > 0) {
-                Object.keys(categoryWPM).forEach((cat) => {
-                    const words = categoryWordCount[cat] || 0;
-                    categoryWPM[cat] = Math.round((words / durationMinutes) * 10) / 10;
-                });
-            }
         }
+        if (durationMinutes && durationMinutes > 0) {
+            Object.keys(categoryWPM).forEach((cat) => {
+                const words = categoryWordCount[cat] || 0;
+                categoryWPM[cat] = Math.round((words / durationMinutes) * 10) / 10;
+            });
+        }
+
+        // Structured logging for debugging sporadic RAG/WPM failures
+        const hasSegments = ragSegments && ragSegments.length > 0;
+        const hasKeywordFallback = !hasSegments && Object.values(keywordCounts).some((v) => v > 0);
+        console.log("[RAG] Classification complete (classroom):", {
+            ragEnabled,
+            openaiKeySet: !!process.env.OPENAI_API_KEY,
+            transcriptLength: transcript?.length || 0,
+            segmentCount: ragSegments?.length ?? 0,
+            classificationMethod,
+            categoryWordCount,
+            categoryWPM,
+            usedKeywordFallback: hasKeywordFallback
+        });
 
         let assessmentDate = new Date();
         if (recordingDate) {
@@ -146,7 +169,7 @@ const classroomWhisperController = async (req, res) => {
             date: assessmentDate,
             center: center || null,
             ragSegments: ragSegments || [],
-            classificationMethod: ragEnabled ? 'rag' : 'keyword-only'
+            classificationMethod
         };
 
         if (fs.existsSync(filePath)) {

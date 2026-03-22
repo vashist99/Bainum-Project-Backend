@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import fs from "fs";
 import revai from "../lib/revai.js";
 import ragClassifier from "../lib/ragClassifier.js";
-import { analyzeTranscript, extractKeywordSegments, computeCategoryWordCountFromSegments } from "../lib/transcriptProcessor.js";
+import { analyzeTranscript, extractKeywordSegments, computeCategoryWordCountFromSegments, deriveCategoryWordCountFromKeywordCounts } from "../lib/transcriptProcessor.js";
 
 dotenv.config();
 
@@ -140,10 +140,18 @@ const revaiController = async (req, res) => {
         }
 
         // Fallback: keyword-based segments when RAG has none
+        let classificationMethod = ragEnabled ? 'rag' : 'keyword-only';
         if (!ragSegments || ragSegments.length === 0) {
             ragSegments = extractKeywordSegments(transcript || "");
             if (ragSegments.length > 0) {
-                console.log("Using keyword-based segments:", ragSegments.length);
+                console.log("[RAG] Using keyword-based segments:", ragSegments.length);
+            } else if (Object.values(keywordCounts).some((v) => v > 0)) {
+                // Edge case: keywords found but extractKeywordSegments returned none (e.g. regex edge case)
+                // Fallback: derive approximate category counts from keywordCounts so WPM is populated
+                const fallbackCounts = deriveCategoryWordCountFromKeywordCounts(keywordCounts);
+                Object.assign(categoryWordCount, fallbackCounts);
+                classificationMethod = 'keyword-only';
+                console.warn("[RAG] No segments from RAG or keyword extractor, but keywordCounts present; using keywordCounts fallback for WPM");
             }
         }
 
@@ -151,19 +159,27 @@ const revaiController = async (req, res) => {
         if (ragSegments && ragSegments.length > 0) {
             const counts = computeCategoryWordCountFromSegments(ragSegments);
             Object.assign(categoryWordCount, counts);
-            if (durationMinutes && durationMinutes > 0) {
-                Object.keys(categoryWPM).forEach((cat) => {
-                    const words = categoryWordCount[cat] || 0;
-                    categoryWPM[cat] = Math.round((words / durationMinutes) * 10) / 10;
-                });
-            }
+        }
+        if (durationMinutes && durationMinutes > 0) {
+            Object.keys(categoryWPM).forEach((cat) => {
+                const words = categoryWordCount[cat] || 0;
+                categoryWPM[cat] = Math.round((words / durationMinutes) * 10) / 10;
+            });
         }
 
-        console.log("=== Classification Complete ===");
-        console.log("Transcript length:", transcript?.length || 0, "characters");
-        console.log("Keyword counts:", keywordCounts);
-        console.log("Category word counts:", categoryWordCount);
-        console.log("Category WPM:", categoryWPM);
+        // Structured logging for debugging sporadic RAG/WPM failures
+        const hasSegments = ragSegments && ragSegments.length > 0;
+        const hasKeywordFallback = !hasSegments && Object.values(keywordCounts).some((v) => v > 0);
+        console.log("[RAG] Classification complete:", {
+            ragEnabled,
+            openaiKeySet: !!process.env.OPENAI_API_KEY,
+            transcriptLength: transcript?.length || 0,
+            segmentCount: ragSegments?.length ?? 0,
+            classificationMethod,
+            categoryWordCount,
+            categoryWPM,
+            usedKeywordFallback: hasKeywordFallback
+        });
 
         // Prepare assessment data (but don't save yet - wait for user acceptance)
         console.log("Preparing assessment data...");
@@ -206,7 +222,7 @@ const revaiController = async (req, res) => {
             uploadedBy: uploadedBy || "Unknown",
             date: assessmentDate,
             ragSegments: ragSegments || [],
-            classificationMethod: ragEnabled ? 'rag' : 'keyword-only'
+            classificationMethod
         };
 
         // Don't save yet - return data for user review

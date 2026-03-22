@@ -104,9 +104,25 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(rateLimiter);
 
-// Health check endpoint
+// Health check endpoints (Render pings /health; logs visible in Render dashboard)
 app.get("/", (req, res) => {
     res.json({ message: "Bainum Project API is running!", status: "OK" });
+});
+
+app.get("/health", (req, res) => {
+    const ragEnabled = process.env.RAG_ENABLED?.toString().toLowerCase().trim() === "true";
+    const openaiKeySet = !!process.env.OPENAI_API_KEY;
+    const revaiKeySet = !!process.env.REVAI_API_KEY;
+    const health = {
+        status: "OK",
+        rag: {
+            enabled: ragEnabled,
+            openaiKeySet
+        },
+        revaiKeySet
+    };
+    console.log("[Health] RAG_ENABLED:", ragEnabled, "OPENAI_API_KEY set:", openaiKeySet, "REVAI_API_KEY set:", revaiKeySet);
+    res.status(200).json(health);
 });
 
 app.use("/api/auth", authRoutes);
