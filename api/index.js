@@ -1,14 +1,13 @@
+// Must be first: ESM evaluates imports before this file's body, so a bare
+// dotenv.config() below would run too late. Load backend/.env by path regardless of cwd.
+import "../config/loadEnv.js";
+
 import express from "express";
-import dotenv from "dotenv";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from 'url';
 
-// Load environment variables FIRST before importing anything that uses them
-dotenv.config();
-
-// Now import modules that depend on environment variables
 import rateLimiter from "../middleware/rateLimiter.js";
 import connectDB from "../config/db.js";
 import authRoutes from "../routes/authRoutes.js";

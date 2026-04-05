@@ -1,6 +1,7 @@
 import Invitation from '../models/Invitation.js';
 import { Child } from '../models/User.js';
 import { sendInvitationEmail } from '../lib/emailService.js';
+import { enactParentEmailExists } from '../lib/enactEmailCheck.js';
 import jwt from 'jsonwebtoken';
 
 /**
@@ -90,9 +91,20 @@ export const sendInvitation = async (req, res) => {
 
         await invitation.save();
 
+        const enactExists = await enactParentEmailExists(email);
+        const partnerAppUrl =
+            enactExists ? undefined : process.env.EXTERNAL_APP_URL?.trim() || undefined;
+        if (!enactExists && !partnerAppUrl) {
+            console.warn(
+                "[Invitation] Enact reports email not registered but EXTERNAL_APP_URL is unset; sending standard invite only"
+            );
+        }
+
         // Send invitation email
         try {
-            await sendInvitationEmail(email, child.name, token, inviterName || 'Administrator');
+            await sendInvitationEmail(email, child.name, token, inviterName || 'Administrator', {
+                partnerAppUrl,
+            });
         } catch (emailError) {
             console.error('Failed to send email, but invitation created:', {
                 error: emailError.message,
