@@ -10,8 +10,6 @@ import AccessGrant from "../models/AccessGrant.js";
 
 const validateUsername = (u) => /^[a-z0-9_]{3,30}$/.test((u || '').toLowerCase().trim());
 
-const validateUsername = (u) => /^[a-z0-9_]{3,30}$/.test((u || '').toLowerCase().trim());
-
 export const register = async (req, res) => {
     try {
         const { name, email, password, role, username } = req.body;
@@ -24,10 +22,6 @@ export const register = async (req, res) => {
             return res.status(400).json({ message: "Username is required (3-30 chars, lowercase letters, numbers, underscore only)" });
         }
         const cleanUsername = username.toLowerCase().trim();
-
-        if (!name || !email || !password || !role) {
-            return res.status(400).json({ message: "Name, email, password, and role are required" });
-        }
 
         // Determine which model to use based on role
         let UserModel;
