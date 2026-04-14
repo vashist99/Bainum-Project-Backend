@@ -5,6 +5,10 @@ import PasswordReset from "../models/PasswordReset.js";
 import { sendPasswordResetEmail } from "../lib/emailService.js";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
+import { enableEnactRecordingForBainumParent } from "../lib/enactAdminClient.js";
+import AccessGrant from "../models/AccessGrant.js";
+
+const validateUsername = (u) => /^[a-z0-9_]{3,30}$/.test((u || '').toLowerCase().trim());
 
 const validateUsername = (u) => /^[a-z0-9_]{3,30}$/.test((u || '').toLowerCase().trim());
 
@@ -294,6 +298,44 @@ export const registerParent = async (req, res) => {
             invitation.childId._id,
             { $addToSet: { parents: parent._id } }
         );
+
+        // Teacher (or lead teacher when admin invited) gets active access to this child's data
+        try {
+            const childDoc = await Child.findById(invitation.childId._id);
+            if (invitation.sentByRole === "teacher") {
+                await AccessGrant.findOneAndUpdate(
+                    {
+                        childId: invitation.childId._id,
+                        teacherId: invitation.sentBy,
+                        parentId: parent._id,
+                    },
+                    { $set: { status: "active", initiatedBy: "teacher" } },
+                    { upsert: true, new: true }
+                );
+            } else if (invitation.sentByRole === "admin" && childDoc?.leadTeacher) {
+                const lead = await Teacher.findOne({ name: childDoc.leadTeacher });
+                if (lead) {
+                    await AccessGrant.findOneAndUpdate(
+                        {
+                            childId: invitation.childId._id,
+                            teacherId: lead._id,
+                            parentId: parent._id,
+                        },
+                        { $set: { status: "active", initiatedBy: "teacher" } },
+                        { upsert: true, new: true }
+                    );
+                }
+            }
+        } catch (grantErr) {
+            console.error("AccessGrant on parent registration:", grantErr.message);
+        }
+
+        if (invitation.enactEmailExists === true) {
+            void enableEnactRecordingForBainumParent({
+                email: invitation.email,
+                baniumChildId: invitation.childId._id.toString(),
+            });
+        }
 
         res.status(201).json({
             message: "Parent account created successfully",

@@ -18,6 +18,12 @@ const teacherAssessmentSchema = new mongoose.Schema({
         type: String, 
         required: false 
     },
+    // Transcript text is retained for one month, while WPM metrics are kept.
+    transcriptExpiresAt: {
+        type: Date,
+        required: false,
+        index: true,
+    },
     scienceTalk: { 
         type: Number, 
         default: 0,

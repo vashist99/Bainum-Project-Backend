@@ -18,6 +18,11 @@ import noteRoutes from "../routes/noteRoutes.js";
 import whisperRoutes from "../routes/whisperRoutes.js";
 import invitationRoutes from "../routes/invitationRoutes.js";
 import teacherInvitationRoutes from "../routes/teacherInvitationRoutes.js";
+import accessRoutes from "../routes/accessRoutes.js";
+import requireIngestApiKey from "../middleware/requireIngestApiKey.js";
+import { ingestAssessmentByParentEmail } from "../controllers/assessmentIngestController.js";
+import Assessment from "../models/Assessment.js";
+import TeacherAssessment from "../models/TeacherAssessment.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,6 +37,32 @@ if (!fs.existsSync(uploadsDir)) {
 
 // Connect to database
 connectDB();
+
+async function purgeExpiredTranscripts() {
+    const now = new Date();
+    await Promise.all([
+        Assessment.updateMany(
+            {
+                transcriptExpiresAt: { $lte: now },
+                transcript: { $exists: true, $ne: '' },
+            },
+            {
+                $set: { transcript: '' },
+                $unset: { ragSegments: 1 },
+            }
+        ),
+        TeacherAssessment.updateMany(
+            {
+                transcriptExpiresAt: { $lte: now },
+                transcript: { $exists: true, $ne: '' },
+            },
+            {
+                $set: { transcript: '' },
+                $unset: { ragSegments: 1 },
+            }
+        ),
+    ]);
+}
 
 //middleware
 // CORS configuration
@@ -90,7 +121,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Api-Key', 'X-Requested-With', 'Accept', 'Origin'],
   exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
   preflightContinue: false,
   optionsSuccessStatus: 204
@@ -99,6 +130,14 @@ const corsOptions = {
 // Apply CORS middleware FIRST, before any other middleware
 // The cors middleware already handles OPTIONS requests automatically
 app.use(cors(corsOptions));
+
+// Large JSON body for server-to-server assessment ingest (must run before global express.json)
+app.post(
+    "/api/integrations/assessments/by-parent-email",
+    express.json({ limit: "2mb" }),
+    requireIngestApiKey,
+    ingestAssessmentByParentEmail
+);
 
 app.use(express.json());
 app.use(rateLimiter);
@@ -132,7 +171,19 @@ app.use("/api/notes", noteRoutes);
 app.use("/api", whisperRoutes);
 app.use("/api/invitations", invitationRoutes);
 app.use("/api/teacher-invitations", teacherInvitationRoutes);
+app.use("/api/access", accessRoutes);
 
 app.listen(process.env.PORT, () => {
     console.log(`Server is running on port ${process.env.PORT}`);
+});
+
+// Keep transcript retention enforced even without transcript read traffic.
+setInterval(() => {
+    purgeExpiredTranscripts().catch((err) => {
+        console.error("Failed to purge expired transcripts:", err.message);
+    });
+}, 60 * 60 * 1000);
+
+purgeExpiredTranscripts().catch((err) => {
+    console.error("Initial transcript purge failed:", err.message);
 });

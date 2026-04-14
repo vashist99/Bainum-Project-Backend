@@ -1,7 +1,7 @@
 import Invitation from '../models/Invitation.js';
 import { Child } from '../models/User.js';
 import { sendInvitationEmail } from '../lib/emailService.js';
-import { enactParentEmailExists } from '../lib/enactEmailCheck.js';
+import { fetchEnactCheckEmail } from '../lib/enactEmailCheck.js';
 import jwt from 'jsonwebtoken';
 
 /**
@@ -66,6 +66,10 @@ export const sendInvitation = async (req, res) => {
             tokenExists = await Invitation.findOne({ token });
         }
 
+        const enactCheck = await fetchEnactCheckEmail(email);
+        const enactExistsForPartner = !enactCheck.ok || enactCheck.exists;
+        const enactEmailExists = enactCheck.ok === true && enactCheck.exists === true;
+
         // Create invitation
         const invitation = new Invitation({
             email,
@@ -74,7 +78,8 @@ export const sendInvitation = async (req, res) => {
             sentBy,
             sentByRole,
             status: 'pending',
-            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+            enactEmailExists,
         });
 
         const payload = {
@@ -91,10 +96,9 @@ export const sendInvitation = async (req, res) => {
 
         await invitation.save();
 
-        const enactExists = await enactParentEmailExists(email);
         const partnerAppUrl =
-            enactExists ? undefined : process.env.EXTERNAL_APP_URL?.trim() || undefined;
-        if (!enactExists && !partnerAppUrl) {
+            enactExistsForPartner ? undefined : process.env.EXTERNAL_APP_URL?.trim() || undefined;
+        if (!enactExistsForPartner && !partnerAppUrl) {
             console.warn(
                 "[Invitation] Enact reports email not registered but EXTERNAL_APP_URL is unset; sending standard invite only"
             );

@@ -38,6 +38,11 @@ const invitationSchema = new mongoose.Schema({
     acceptedAt: { 
         type: Date 
     },
+    /** True only when Enact check-email returned { exists: true } at invite time */
+    enactEmailExists: {
+        type: Boolean,
+        default: false,
+    },
 }, {
     timestamps: true
 });

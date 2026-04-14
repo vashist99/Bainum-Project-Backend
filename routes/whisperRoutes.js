@@ -10,11 +10,52 @@ import Assessment from '../models/Assessment.js';
 import TeacherAssessment from '../models/TeacherAssessment.js';
 import authenticateToken from '../middleware/authMiddleware.js';
 import { recomputeAndSaveChildrenCohortStats, recomputeAndSaveTeachersCohortStats, getCohortStats } from '../lib/cohortStatsService.js';
+import { hasActiveTeacherChildGrant, hasActiveParentTeacherGrant } from '../lib/accessGrantHelpers.js';
+import { Parent } from '../models/User.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const router = express.Router();
+
+function addOneMonth(dateLike) {
+    const d = new Date(dateLike);
+    d.setMonth(d.getMonth() + 1);
+    return d;
+}
+
+function getCurrentMonthRange() {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    return { start, end };
+}
+
+async function purgeExpiredTranscripts() {
+    const now = new Date();
+    await Promise.all([
+        Assessment.updateMany(
+            {
+                transcriptExpiresAt: { $lte: now },
+                transcript: { $exists: true, $ne: '' },
+            },
+            {
+                $set: { transcript: '' },
+                $unset: { ragSegments: 1 },
+            }
+        ),
+        TeacherAssessment.updateMany(
+            {
+                transcriptExpiresAt: { $lte: now },
+                transcript: { $exists: true, $ne: '' },
+            },
+            {
+                $set: { transcript: '' },
+                $unset: { ragSegments: 1 },
+            }
+        ),
+    ]);
+}
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, '..', 'uploads');
@@ -79,10 +120,33 @@ router.post('/whisper', upload.single('audio'), handleMulterError, revaiControll
 router.post('/whisper/classroom', authenticateToken, upload.single('audio'), handleMulterError, classroomWhisperController);
 
 // Route to get all assessments for a child
-router.get('/assessments/child/:childId', async (req, res) => {
+router.get('/assessments/child/:childId', authenticateToken, async (req, res) => {
     try {
+        await purgeExpiredTranscripts();
         const { childId } = req.params;
-        const assessments = await Assessment.find({ childId }).sort({ date: -1 });
+        const user = req.user;
+
+        if (user.role === 'parent') {
+            const userChildId = user.childId?.toString?.() || (typeof user.childId === 'string' ? user.childId : null);
+            if (!userChildId || userChildId !== String(childId)) {
+                return res.status(403).json({ message: "You can only access your own child's transcripts" });
+            }
+        } else if (user.role === 'teacher') {
+            const ok = await hasActiveTeacherChildGrant(user.id, childId);
+            if (!ok) {
+                return res.status(403).json({ message: "You do not have access to this child's assessments" });
+            }
+        } else if (user.role !== 'admin') {
+            return res.status(403).json({ message: "Not allowed to view child transcripts" });
+        }
+
+        const query = { childId };
+        if (user.role === 'parent' || user.role === 'teacher') {
+            const { start, end } = getCurrentMonthRange();
+            query.date = { $gte: start, $lt: end };
+        }
+
+        const assessments = await Assessment.find(query).sort({ date: -1 });
         res.status(200).json({ assessments });
     } catch (error) {
         console.error("Error fetching assessments:", error);
@@ -91,10 +155,33 @@ router.get('/assessments/child/:childId', async (req, res) => {
 });
 
 // Route to get latest assessment for a child
-router.get('/assessments/child/:childId/latest', async (req, res) => {
+router.get('/assessments/child/:childId/latest', authenticateToken, async (req, res) => {
     try {
+        await purgeExpiredTranscripts();
         const { childId } = req.params;
-        const assessment = await Assessment.findOne({ childId }).sort({ date: -1 });
+        const user = req.user;
+
+        if (user.role === 'parent') {
+            const userChildId = user.childId?.toString?.() || (typeof user.childId === 'string' ? user.childId : null);
+            if (!userChildId || userChildId !== String(childId)) {
+                return res.status(403).json({ message: "You can only access your own child's transcripts" });
+            }
+        } else if (user.role === 'teacher') {
+            const ok = await hasActiveTeacherChildGrant(user.id, childId);
+            if (!ok) {
+                return res.status(403).json({ message: "You do not have access to this child's assessments" });
+            }
+        } else if (user.role !== 'admin') {
+            return res.status(403).json({ message: "Not allowed to view child transcripts" });
+        }
+
+        const query = { childId };
+        if (user.role === 'parent' || user.role === 'teacher') {
+            const { start, end } = getCurrentMonthRange();
+            query.date = { $gte: start, $lt: end };
+        }
+
+        const assessment = await Assessment.findOne(query).sort({ date: -1 });
         
         if (!assessment) {
             return res.status(404).json({ message: "No assessments found for this child" });
@@ -147,6 +234,7 @@ router.post('/assessments/accept', async (req, res) => {
             classificationMethod: classificationMethod || 'keyword-only',
             uploadedBy: uploadedBy || "Unknown",
             date: date ? new Date(date) : new Date(),
+            transcriptExpiresAt: addOneMonth(date ? new Date(date) : new Date()),
             wordCount: wordCount ?? null,
             durationSeconds: durationSeconds ?? null,
             wordsPerMinute: wordsPerMinute ?? null,
@@ -228,35 +316,102 @@ router.get('/assessments/cohort-stats/children', async (req, res) => {
     }
 });
 
-// Route to get all teacher assessments (teachers can only access their own)
+// Route to get all teacher assessments (teachers: own; parents: with active grant; admins: all)
 router.get('/assessments/teacher/:teacherId', authenticateToken, async (req, res) => {
     try {
+        await purgeExpiredTranscripts();
         const { teacherId } = req.params;
-        if (req.user.role === 'teacher' && String(req.user.id) !== String(teacherId)) {
-            return res.status(403).json({ message: "You can only access your own assessments" });
+        const user = req.user;
+
+        if (user.role === 'admin') {
+            const assessments = await TeacherAssessment.find({ teacherId }).sort({ date: -1 });
+            return res.status(200).json({ assessments });
         }
-        const assessments = await TeacherAssessment.find({ teacherId }).sort({ date: -1 });
-        res.status(200).json({ assessments });
+
+        if (user.role === 'teacher') {
+            if (String(user.id) !== String(teacherId)) {
+                return res.status(403).json({ message: "You can only access your own assessments" });
+            }
+            const { start, end } = getCurrentMonthRange();
+            const assessments = await TeacherAssessment.find({
+                teacherId,
+                date: { $gte: start, $lt: end },
+            }).sort({ date: -1 });
+            return res.status(200).json({ assessments });
+        }
+
+        if (user.role === 'parent' && user.childId) {
+            const parent = await Parent.findById(user.id);
+            if (!parent) {
+                return res.status(404).json({ message: "Parent not found" });
+            }
+            const ok = await hasActiveParentTeacherGrant(parent._id, teacherId, user.childId);
+            if (!ok) {
+                return res.status(403).json({ message: "You do not have access to this teacher's assessments" });
+            }
+            const { start, end } = getCurrentMonthRange();
+            const assessments = await TeacherAssessment.find({
+                teacherId,
+                date: { $gte: start, $lt: end },
+            }).sort({ date: -1 });
+            return res.status(200).json({ assessments });
+        }
+
+        return res.status(403).json({ message: "Not allowed to access teacher transcripts" });
     } catch (error) {
         console.error("Error fetching teacher assessments:", error);
         res.status(500).json({ message: error.message });
     }
 });
 
-// Route to get latest teacher assessment (teachers can only access their own)
+// Route to get latest teacher assessment
 router.get('/assessments/teacher/:teacherId/latest', authenticateToken, async (req, res) => {
     try {
+        await purgeExpiredTranscripts();
         const { teacherId } = req.params;
-        if (req.user.role === 'teacher' && String(req.user.id) !== String(teacherId)) {
-            return res.status(403).json({ message: "You can only access your own assessments" });
-        }
-        const assessment = await TeacherAssessment.findOne({ teacherId }).sort({ date: -1 });
+        const user = req.user;
 
-        if (!assessment) {
-            return res.status(404).json({ message: "No assessments found for this teacher" });
+        const buildMonthQuery = (tid) => {
+            const { start, end } = getCurrentMonthRange();
+            return { teacherId: tid, date: { $gte: start, $lt: end } };
+        };
+
+        if (user.role === 'admin') {
+            const assessment = await TeacherAssessment.findOne({ teacherId }).sort({ date: -1 });
+            if (!assessment) {
+                return res.status(404).json({ message: "No assessments found for this teacher" });
+            }
+            return res.status(200).json({ assessment });
         }
 
-        res.status(200).json({ assessment });
+        if (user.role === 'teacher') {
+            if (String(user.id) !== String(teacherId)) {
+                return res.status(403).json({ message: "You can only access your own assessments" });
+            }
+            const assessment = await TeacherAssessment.findOne(buildMonthQuery(teacherId)).sort({ date: -1 });
+            if (!assessment) {
+                return res.status(404).json({ message: "No assessments found for this teacher" });
+            }
+            return res.status(200).json({ assessment });
+        }
+
+        if (user.role === 'parent' && user.childId) {
+            const parent = await Parent.findById(user.id);
+            if (!parent) {
+                return res.status(404).json({ message: "Parent not found" });
+            }
+            const ok = await hasActiveParentTeacherGrant(parent._id, teacherId, user.childId);
+            if (!ok) {
+                return res.status(403).json({ message: "You do not have access to this teacher's assessments" });
+            }
+            const assessment = await TeacherAssessment.findOne(buildMonthQuery(teacherId)).sort({ date: -1 });
+            if (!assessment) {
+                return res.status(404).json({ message: "No assessments found for this teacher" });
+            }
+            return res.status(200).json({ assessment });
+        }
+
+        return res.status(403).json({ message: "Not allowed to access teacher transcripts" });
     } catch (error) {
         console.error("Error fetching latest teacher assessment:", error);
         res.status(500).json({ message: error.message });
@@ -301,6 +456,7 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
             classificationMethod: classificationMethod || 'keyword-only',
             uploadedBy: uploadedBy || "Unknown",
             date: date ? new Date(date) : new Date(),
+            transcriptExpiresAt: addOneMonth(date ? new Date(date) : new Date()),
             center: center || null,
             wordCount: wordCount ?? null,
             durationSeconds: durationSeconds ?? null,

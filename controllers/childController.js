@@ -1,4 +1,5 @@
-import { Child } from "../models/User.js";
+import { Child, Teacher } from "../models/User.js";
+import { hasActiveTeacherChildGrant } from "../lib/accessGrantHelpers.js";
 
 export const createChild = async (req, res) => {
     try {
@@ -51,6 +52,24 @@ export const createChild = async (req, res) => {
 
 export const getAllChildren = async (req, res) => {
     try {
+        const user = req.user;
+        if (user?.role === "admin") {
+            const children = await Child.find();
+            return res.status(200).json({ children });
+        }
+        if (user?.role === "teacher") {
+            const teacher = await Teacher.findById(user.id);
+            if (!teacher) {
+                return res.status(200).json({ children: [] });
+            }
+            // List all children assigned to this lead teacher (for invites). Full child page still requires AccessGrant.
+            const children = await Child.find({ leadTeacher: teacher.name });
+            return res.status(200).json({ children });
+        }
+        if (user?.role === "parent" && user.childId) {
+            const children = await Child.find({ _id: user.childId });
+            return res.status(200).json({ children });
+        }
         const children = await Child.find();
         res.status(200).json({ children });
     } catch (error) {
@@ -67,9 +86,6 @@ export const getChildById = async (req, res) => {
             return res.status(404).json({ message: "Child not found" });
         }
 
-        // If user is a parent, verify they have access to this child
-        // The parentChildAccess middleware should be applied in the route, not here
-        // But we can also check here as a safety measure
         if (req.user && req.user.role === 'parent' && req.user.childId) {
             const userChildId = req.user.childId.toString();
             const childId = child._id.toString();
@@ -77,6 +93,28 @@ export const getChildById = async (req, res) => {
             if (userChildId !== childId) {
                 return res.status(403).json({ message: "You don't have access to this child's data" });
             }
+        }
+
+        if (req.user?.role === "teacher") {
+            const teacher = await Teacher.findById(req.user.id);
+            const hasGrant = await hasActiveTeacherChildGrant(req.user.id, child._id);
+            if (hasGrant) {
+                return res.status(200).json({ child });
+            }
+            const isLead = teacher && child.leadTeacher === teacher.name;
+            if (isLead) {
+                return res.status(403).json({
+                    code: "TEACHER_ACCESS_DENIED",
+                    message:
+                        "The parent must accept your invitation (or approve access) before you can view this child's full data. You can send an invitation to the parent's email below.",
+                    child: {
+                        _id: child._id,
+                        name: child.name,
+                        leadTeacher: child.leadTeacher,
+                    },
+                });
+            }
+            return res.status(403).json({ message: "You do not have access to this child's data" });
         }
         
         res.status(200).json({ child });
