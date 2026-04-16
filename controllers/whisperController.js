@@ -19,11 +19,6 @@ const revaiController = async (req, res) => {
 
         const { childId, uploadedBy, recordingDate } = req.body;
 
-        if (!childId) {
-            console.error("Missing childId in request");
-            return res.status(400).json({ message: "Child ID is required" });
-        }
-
         if (!req.file) {
             console.error("No file uploaded in request");
             return res.status(400).json({ 
@@ -206,7 +201,7 @@ const revaiController = async (req, res) => {
         }
         
         const assessmentData = {
-            childId,
+            ...(childId ? { childId } : {}),
             audioFileName: req.file.filename,
             transcript: transcript || "",
             scienceTalk: 0,
@@ -241,13 +236,17 @@ const revaiController = async (req, res) => {
         console.log("=== Audio Processing Complete ===");
         
         res.status(200).json({
-            message: "Audio processed successfully - please review transcript",
+            message: childId
+                ? "Audio processed successfully - please review transcript"
+                : "Audio processed successfully - childId omitted; provide childId before saving",
             assessment: assessmentData,
             transcript,
             keywordCounts,
             categoryWordCount,
             ragSegments: ragSegments || null,
-            classificationMethod: assessmentData.classificationMethod
+            classificationMethod: assessmentData.classificationMethod,
+            requiresChildIdToSave: !childId,
+            saveEndpoint: "/api/assessments/accept"
         });
     } catch (error) {
         // Client cancelled (Cancel button) - stop processing; don't log as error
