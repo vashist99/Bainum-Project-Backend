@@ -108,6 +108,7 @@ export const sendInvitation = async (req, res) => {
         try {
             await sendInvitationEmail(email, child.name, token, inviterName || 'Administrator', {
                 partnerAppUrl,
+                enactEmailExists,
             });
         } catch (emailError) {
             console.error('Failed to send email, but invitation created:', {
