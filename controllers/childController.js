@@ -1,5 +1,10 @@
-import { Child, Teacher } from "../models/User.js";
+import mongoose from "mongoose";
+import { Child, Teacher, Parent } from "../models/User.js";
 import { hasActiveTeacherChildGrant } from "../lib/accessGrantHelpers.js";
+import {
+    getResolvedChildIdStringsForParent,
+    parentMayAccessChild,
+} from "../lib/parentChildHelpers.js";
 
 export const createChild = async (req, res) => {
     try {
@@ -53,7 +58,16 @@ export const createChild = async (req, res) => {
 export const getAllChildren = async (req, res) => {
     try {
         const user = req.user;
+        const linkedOnly = req.query?.linkedToAcceptedParent === "true" || req.query?.linkedToAcceptedParent === "1";
+
         if (user?.role === "admin") {
+            if (linkedOnly) {
+                const acceptedParentIds = await Parent.find({ invitationAccepted: true }).distinct("_id");
+                const children = await Child.find({
+                    parents: { $in: acceptedParentIds },
+                });
+                return res.status(200).json({ children });
+            }
             const children = await Child.find();
             return res.status(200).json({ children });
         }
@@ -66,8 +80,17 @@ export const getAllChildren = async (req, res) => {
             const children = await Child.find({ leadTeacher: teacher.name });
             return res.status(200).json({ children });
         }
-        if (user?.role === "parent" && user.childId) {
-            const children = await Child.find({ _id: user.childId });
+        if (user?.role === "parent") {
+            const parent = await Parent.findById(user.id);
+            if (!parent) {
+                return res.status(404).json({ message: "Parent not found" });
+            }
+            const idStrs = await getResolvedChildIdStringsForParent(parent);
+            if (idStrs.length === 0) {
+                return res.status(200).json({ children: [] });
+            }
+            const oids = idStrs.map((s) => new mongoose.Types.ObjectId(s));
+            const children = await Child.find({ _id: { $in: oids } });
             return res.status(200).json({ children });
         }
         const children = await Child.find();
@@ -86,11 +109,13 @@ export const getChildById = async (req, res) => {
             return res.status(404).json({ message: "Child not found" });
         }
 
-        if (req.user && req.user.role === 'parent' && req.user.childId) {
-            const userChildId = req.user.childId.toString();
-            const childId = child._id.toString();
-            
-            if (userChildId !== childId) {
+        if (req.user && req.user.role === "parent") {
+            const parent = await Parent.findById(req.user.id);
+            if (!parent) {
+                return res.status(404).json({ message: "Parent not found" });
+            }
+            const ok = await parentMayAccessChild(parent, child._id);
+            if (!ok) {
                 return res.status(403).json({ message: "You don't have access to this child's data" });
             }
         }

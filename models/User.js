@@ -28,11 +28,19 @@ const parentSchema = new mongoose.Schema({
     email: { type: String, required: true, unique: true },
     role: { type: String, required: true, enum: ["parent"] },
     password: { type: String, required: true },
-    childId: { 
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: "Child", 
-        required: true 
+    /** Primary / legacy single-child field; kept in sync with childIds[0]. */
+    childId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Child",
+        required: false,
     },
+    /** All children linked to this parent (invites + registration). */
+    childIds: [
+        {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Child",
+        },
+    ],
     invitationToken: { type: String }, // Store the invitation token used
     invitationAccepted: { type: Boolean, default: false },
 }, {
@@ -51,6 +59,8 @@ const childSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId, 
         ref: "Parent" 
     }], // Link to parent accounts
+    /** Parent email used for the Bainum invitation (or linked account), lowercase */
+    invitedParentEmail: { type: String, trim: true, lowercase: true },
 }, {
     timestamps: true
 });

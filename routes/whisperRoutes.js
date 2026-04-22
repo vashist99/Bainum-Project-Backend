@@ -10,8 +10,12 @@ import Assessment from '../models/Assessment.js';
 import TeacherAssessment from '../models/TeacherAssessment.js';
 import authenticateToken from '../middleware/authMiddleware.js';
 import { recomputeAndSaveChildrenCohortStats, recomputeAndSaveTeachersCohortStats, getCohortStats } from '../lib/cohortStatsService.js';
-import { hasActiveTeacherChildGrant, hasActiveParentTeacherGrant } from '../lib/accessGrantHelpers.js';
+import {
+    hasActiveTeacherChildGrant,
+    hasActiveParentTeacherGrantForAnyChild,
+} from '../lib/accessGrantHelpers.js';
 import { Parent } from '../models/User.js';
+import { parentMayAccessChild, getResolvedChildIdStringsForParent } from '../lib/parentChildHelpers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,11 +28,34 @@ function addOneMonth(dateLike) {
     return d;
 }
 
-function getCurrentMonthRange() {
+function toObjectId(id) {
+    return mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id;
+}
+
+/**
+ * For parents/teachers: only assessments whose transcript retention is still active.
+ * - transcriptExpiresAt in the future, OR
+ * - legacy documents with no expiry field but still have transcript text (pre-retention field).
+ * Admins do not use this filter.
+ */
+function transcriptVisibilityFilter() {
     const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth(), 1);
-    const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-    return { start, end };
+    return {
+        $or: [
+            { transcriptExpiresAt: { $gt: now } },
+            {
+                $and: [
+                    {
+                        $or: [
+                            { transcriptExpiresAt: { $exists: false } },
+                            { transcriptExpiresAt: null },
+                        ],
+                    },
+                    { transcript: { $exists: true, $nin: [null, ''] } },
+                ],
+            },
+        ],
+    };
 }
 
 async function purgeExpiredTranscripts() {
@@ -127,9 +154,9 @@ router.get('/assessments/child/:childId', authenticateToken, async (req, res) =>
         const user = req.user;
 
         if (user.role === 'parent') {
-            const userChildId = user.childId?.toString?.() || (typeof user.childId === 'string' ? user.childId : null);
-            if (!userChildId || userChildId !== String(childId)) {
-                return res.status(403).json({ message: "You can only access your own child's transcripts" });
+            const parent = await Parent.findById(user.id);
+            if (!parent || !(await parentMayAccessChild(parent, childId))) {
+                return res.status(403).json({ message: "You can only access your own children's transcripts" });
             }
         } else if (user.role === 'teacher') {
             const ok = await hasActiveTeacherChildGrant(user.id, childId);
@@ -140,10 +167,9 @@ router.get('/assessments/child/:childId', authenticateToken, async (req, res) =>
             return res.status(403).json({ message: "Not allowed to view child transcripts" });
         }
 
-        const query = { childId };
+        const query = { childId: toObjectId(childId) };
         if (user.role === 'parent' || user.role === 'teacher') {
-            const { start, end } = getCurrentMonthRange();
-            query.date = { $gte: start, $lt: end };
+            Object.assign(query, transcriptVisibilityFilter());
         }
 
         const assessments = await Assessment.find(query).sort({ date: -1 });
@@ -162,9 +188,9 @@ router.get('/assessments/child/:childId/latest', authenticateToken, async (req, 
         const user = req.user;
 
         if (user.role === 'parent') {
-            const userChildId = user.childId?.toString?.() || (typeof user.childId === 'string' ? user.childId : null);
-            if (!userChildId || userChildId !== String(childId)) {
-                return res.status(403).json({ message: "You can only access your own child's transcripts" });
+            const parent = await Parent.findById(user.id);
+            if (!parent || !(await parentMayAccessChild(parent, childId))) {
+                return res.status(403).json({ message: "You can only access your own children's transcripts" });
             }
         } else if (user.role === 'teacher') {
             const ok = await hasActiveTeacherChildGrant(user.id, childId);
@@ -175,10 +201,9 @@ router.get('/assessments/child/:childId/latest', authenticateToken, async (req, 
             return res.status(403).json({ message: "Not allowed to view child transcripts" });
         }
 
-        const query = { childId };
+        const query = { childId: toObjectId(childId) };
         if (user.role === 'parent' || user.role === 'teacher') {
-            const { start, end } = getCurrentMonthRange();
-            query.date = { $gte: start, $lt: end };
+            Object.assign(query, transcriptVisibilityFilter());
         }
 
         const assessment = await Assessment.findOne(query).sort({ date: -1 });
@@ -274,10 +299,13 @@ router.delete('/assessments/child/:assessmentId', authenticateToken, async (req,
             return res.status(404).json({ message: "Assessment not found" });
         }
 
-        // Admin can delete any; parent can only delete their own child's assessments
-        const childIdStr = assessment.childId?.toString();
-        const userChildId = user.childId?.toString?.() || (typeof user.childId === 'string' ? user.childId : null);
-        if (user.role !== 'admin' && (user.role !== 'parent' || userChildId !== childIdStr)) {
+        // Admin can delete any; parent can only delete assessments for their linked children
+        if (user.role === 'parent') {
+            const parent = await Parent.findById(user.id);
+            if (!parent || !(await parentMayAccessChild(parent, assessment.childId))) {
+                return res.status(403).json({ message: "You do not have permission to delete this assessment" });
+            }
+        } else if (user.role !== 'admin') {
             return res.status(403).json({ message: "You do not have permission to delete this assessment" });
         }
 
@@ -332,27 +360,26 @@ router.get('/assessments/teacher/:teacherId', authenticateToken, async (req, res
             if (String(user.id) !== String(teacherId)) {
                 return res.status(403).json({ message: "You can only access your own assessments" });
             }
-            const { start, end } = getCurrentMonthRange();
             const assessments = await TeacherAssessment.find({
-                teacherId,
-                date: { $gte: start, $lt: end },
+                teacherId: toObjectId(teacherId),
+                ...transcriptVisibilityFilter(),
             }).sort({ date: -1 });
             return res.status(200).json({ assessments });
         }
 
-        if (user.role === 'parent' && user.childId) {
+        if (user.role === 'parent') {
             const parent = await Parent.findById(user.id);
             if (!parent) {
                 return res.status(404).json({ message: "Parent not found" });
             }
-            const ok = await hasActiveParentTeacherGrant(parent._id, teacherId, user.childId);
+            const childIdStrs = await getResolvedChildIdStringsForParent(parent);
+            const ok = await hasActiveParentTeacherGrantForAnyChild(parent._id, teacherId, childIdStrs);
             if (!ok) {
                 return res.status(403).json({ message: "You do not have access to this teacher's assessments" });
             }
-            const { start, end } = getCurrentMonthRange();
             const assessments = await TeacherAssessment.find({
-                teacherId,
-                date: { $gte: start, $lt: end },
+                teacherId: toObjectId(teacherId),
+                ...transcriptVisibilityFilter(),
             }).sort({ date: -1 });
             return res.status(200).json({ assessments });
         }
@@ -371,10 +398,10 @@ router.get('/assessments/teacher/:teacherId/latest', authenticateToken, async (r
         const { teacherId } = req.params;
         const user = req.user;
 
-        const buildMonthQuery = (tid) => {
-            const { start, end } = getCurrentMonthRange();
-            return { teacherId: tid, date: { $gte: start, $lt: end } };
-        };
+        const buildTeacherTranscriptQuery = (tid) => ({
+            teacherId: toObjectId(tid),
+            ...transcriptVisibilityFilter(),
+        });
 
         if (user.role === 'admin') {
             const assessment = await TeacherAssessment.findOne({ teacherId }).sort({ date: -1 });
@@ -388,23 +415,24 @@ router.get('/assessments/teacher/:teacherId/latest', authenticateToken, async (r
             if (String(user.id) !== String(teacherId)) {
                 return res.status(403).json({ message: "You can only access your own assessments" });
             }
-            const assessment = await TeacherAssessment.findOne(buildMonthQuery(teacherId)).sort({ date: -1 });
+            const assessment = await TeacherAssessment.findOne(buildTeacherTranscriptQuery(teacherId)).sort({ date: -1 });
             if (!assessment) {
                 return res.status(404).json({ message: "No assessments found for this teacher" });
             }
             return res.status(200).json({ assessment });
         }
 
-        if (user.role === 'parent' && user.childId) {
+        if (user.role === 'parent') {
             const parent = await Parent.findById(user.id);
             if (!parent) {
                 return res.status(404).json({ message: "Parent not found" });
             }
-            const ok = await hasActiveParentTeacherGrant(parent._id, teacherId, user.childId);
+            const childIdStrs = await getResolvedChildIdStringsForParent(parent);
+            const ok = await hasActiveParentTeacherGrantForAnyChild(parent._id, teacherId, childIdStrs);
             if (!ok) {
                 return res.status(403).json({ message: "You do not have access to this teacher's assessments" });
             }
-            const assessment = await TeacherAssessment.findOne(buildMonthQuery(teacherId)).sort({ date: -1 });
+            const assessment = await TeacherAssessment.findOne(buildTeacherTranscriptQuery(teacherId)).sort({ date: -1 });
             if (!assessment) {
                 return res.status(404).json({ message: "No assessments found for this teacher" });
             }

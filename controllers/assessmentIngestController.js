@@ -1,7 +1,8 @@
 import mongoose from "mongoose";
-import { Parent, Child } from "../models/User.js";
+import { Parent } from "../models/User.js";
 import Assessment from "../models/Assessment.js";
 import { recomputeAndSaveChildrenCohortStats } from "../lib/cohortStatsService.js";
+import { getResolvedChildIdStringsForParent } from "../lib/parentChildHelpers.js";
 
 function addOneMonth(dateLike) {
     const d = new Date(dateLike);
@@ -19,23 +20,6 @@ async function findParentByEmail(email) {
     return Parent.findOne({
         email: { $regex: new RegExp(`^${trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
     });
-}
-
-/**
- * All child MongoDB ids linked to this parent account (primary child + any Child.parents entries).
- * @param {import("mongoose").Document} parent
- * @returns {Promise<string[]>}
- */
-async function resolveChildIdsForParent(parent) {
-    const ids = new Set();
-    if (parent.childId) {
-        ids.add(parent.childId.toString());
-    }
-    const linked = await Child.find({ parents: parent._id }).select("_id").lean();
-    for (const c of linked) {
-        if (c?._id) ids.add(c._id.toString());
-    }
-    return [...ids];
 }
 
 /**
@@ -58,7 +42,7 @@ export const ingestAssessmentByParentEmail = async (req, res) => {
             return res.status(404).json({ message: "No parent account found for that email" });
         }
 
-        const childIdStrings = await resolveChildIdsForParent(parent);
+        const childIdStrings = await getResolvedChildIdStringsForParent(parent);
         if (childIdStrings.length === 0) {
             return res.status(404).json({ message: "Parent has no linked children" });
         }

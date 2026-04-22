@@ -5,8 +5,13 @@ import PasswordReset from "../models/PasswordReset.js";
 import { sendPasswordResetEmail } from "../lib/emailService.js";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
-import { enableEnactRecordingForBainumParent } from "../lib/enactAdminClient.js";
-import AccessGrant from "../models/AccessGrant.js";
+import {
+    buildParentJwtPayload,
+    normalizeParentChildReferences,
+    guardSingleParentInviteAcceptance,
+    applyAccessGrantsAndEnactForChild,
+} from "../lib/parentChildHelpers.js";
+import { resolveInvitationChildIds } from "../lib/invitationChildIds.js";
 
 const validateUsername = (u) => /^[a-z0-9_]{3,30}$/.test((u || '').toLowerCase().trim());
 
@@ -145,18 +150,25 @@ export const login = async (req, res) => {
             return res.status(401).json({ message: "Invalid email or password" });
         }
 
-        // Include username for profile URLs (teachers)
-        const userResponse = {
-            id: user._id.toString(),
-            name: user.name,
-            email: user.email,
-            role: user.role,
-            username: user.username || undefined,
-        };
-
-        if (user.role === 'parent' && user.childId) {
-            // Convert ObjectId to string for JSON serialization
-            userResponse.childId = user.childId.toString ? user.childId.toString() : String(user.childId);
+        let userResponse;
+        if (user.role === "parent") {
+            const parentFresh = await Parent.findById(user._id);
+            if (!parentFresh) {
+                return res.status(401).json({ message: "Invalid email or password" });
+            }
+            if (parentFresh.childId && (!parentFresh.childIds || parentFresh.childIds.length === 0)) {
+                parentFresh.childIds = [parentFresh.childId];
+                await parentFresh.save();
+            }
+            userResponse = buildParentJwtPayload(parentFresh);
+        } else {
+            userResponse = {
+                id: user._id.toString(),
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                username: user.username || undefined,
+            };
         }
 
         const token = jwt.sign(userResponse, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
@@ -177,75 +189,154 @@ export const login = async (req, res) => {
 };
 
 /**
- * Register parent with invitation token
+ * Register parent with invitation token (invitation may list multiple children)
  */
 export const registerParent = async (req, res) => {
     try {
         const { name, email, password, invitationToken, username } = req.body;
 
-        // Validate required fields
         if (!name || !email || !password || !invitationToken) {
-            return res.status(400).json({ 
-                message: "Name, email, password, and invitation token are required" 
+            return res.status(400).json({
+                message: "Name, email, password, and invitation token are required",
             });
         }
 
         if (!username || !validateUsername(username)) {
-            return res.status(400).json({ message: "Username is required (3-30 chars, lowercase letters, numbers, underscore only)" });
+            return res.status(400).json({
+                message: "Username is required (3-30 chars, lowercase letters, numbers, underscore only)",
+            });
         }
         const cleanUsername = username.toLowerCase().trim();
 
-        // Validate email format
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
-            return res.status(400).json({ 
-                message: "Invalid email format" 
+            return res.status(400).json({
+                message: "Invalid email format",
             });
         }
 
-        // Validate password length
         if (password.length < 6) {
-            return res.status(400).json({ 
-                message: "Password must be at least 6 characters" 
+            return res.status(400).json({
+                message: "Password must be at least 6 characters",
             });
         }
 
-        // Verify invitation token
         const invitation = await Invitation.findOne({ token: invitationToken })
-            .populate('childId');
+            .populate("childId")
+            .populate("childIds");
 
         if (!invitation) {
-            return res.status(404).json({ 
-                message: "Invalid invitation token" 
+            return res.status(404).json({
+                message: "Invalid invitation token",
             });
         }
 
-        if (invitation.status === 'accepted') {
-            return res.status(400).json({ 
-                message: "This invitation has already been used" 
+        if (invitation.status === "accepted") {
+            return res.status(400).json({
+                message: "This invitation has already been used",
             });
         }
 
         if (invitation.isExpired()) {
-            invitation.status = 'expired';
+            invitation.status = "expired";
             await invitation.save();
-            return res.status(400).json({ 
-                message: "This invitation has expired" 
+            return res.status(400).json({
+                message: "This invitation has expired",
             });
         }
 
-        // Verify email matches invitation
         if (invitation.email.toLowerCase() !== email.toLowerCase()) {
-            return res.status(400).json({ 
-                message: "Email does not match the invitation" 
+            return res.status(400).json({
+                message: "Email does not match the invitation",
             });
         }
 
-        // Check if parent already exists
-        const existingParent = await Parent.findOne({ email });
+        const childOidList = resolveInvitationChildIds(invitation);
+        if (!childOidList.length) {
+            return res.status(400).json({ message: "Invitation has no linked children" });
+        }
+
+        for (const oid of childOidList) {
+            const c = await Child.findById(oid);
+            if (!c) {
+                return res.status(404).json({ message: "Child not found" });
+            }
+        }
+
+        const existingParent = await Parent.findOne({
+            email: new RegExp(`^${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i"),
+        });
+
+        for (const oid of childOidList) {
+            const childForInvite = await Child.findById(oid);
+            const inviteGuard = guardSingleParentInviteAcceptance(childForInvite, existingParent?._id);
+            if (!inviteGuard.ok) {
+                return res.status(400).json({ message: inviteGuard.message });
+            }
+        }
+
+        const primaryChildId = childOidList[0];
+
         if (existingParent) {
-            return res.status(400).json({ 
-                message: "An account with this email already exists" 
+            let pwdOk = false;
+            if (
+                existingParent.password.startsWith("$2a$") ||
+                existingParent.password.startsWith("$2b$") ||
+                existingParent.password.startsWith("$2y$")
+            ) {
+                pwdOk = await bcrypt.compare(password, existingParent.password);
+            } else {
+                pwdOk = existingParent.password === password;
+                if (pwdOk) {
+                    const saltRounds = 10;
+                    existingParent.password = await bcrypt.hash(password, saltRounds);
+                    await existingParent.save();
+                }
+            }
+            if (!pwdOk) {
+                return res.status(401).json({ message: "Invalid password for this account" });
+            }
+
+            await Parent.updateOne(
+                { _id: existingParent._id },
+                { $addToSet: { childIds: { $each: childOidList } } }
+            );
+            const parent = await Parent.findById(existingParent._id);
+            parent.name = name;
+            normalizeParentChildReferences(parent);
+            parent.invitationToken = invitationToken;
+            parent.invitationAccepted = true;
+            await parent.save();
+
+            const acceptedAt = new Date();
+            const acceptRes = await Invitation.updateOne(
+                { _id: invitation._id, status: "pending" },
+                { $set: { status: "accepted", acceptedAt } }
+            );
+            if (acceptRes.modifiedCount !== 1) {
+                return res.status(400).json({ message: "This invitation has already been used" });
+            }
+
+            for (const oid of childOidList) {
+                await Child.findByIdAndUpdate(oid, { $addToSet: { parents: parent._id } });
+                await applyAccessGrantsAndEnactForChild(invitation, parent._id, oid);
+            }
+
+            await Child.updateMany(
+                { _id: { $in: childOidList } },
+                { $set: { invitedParentEmail: invitation.email.trim().toLowerCase() } }
+            );
+
+            const token = jwt.sign(buildParentJwtPayload(parent), process.env.JWT_SECRET, {
+                expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+            });
+
+            return res.status(200).json({
+                message:
+                    childOidList.length > 1
+                        ? "Children linked to your account successfully"
+                        : "Child linked to your account successfully",
+                user: token,
             });
         }
 
@@ -254,82 +345,45 @@ export const registerParent = async (req, res) => {
             return res.status(400).json({ message: "Username is already taken" });
         }
 
-        // Hash password before saving
         const saltRounds = 10;
         const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-        // Create parent account
         const parent = new Parent({
             name,
             email,
             username: cleanUsername,
             password: hashedPassword,
-            role: 'parent',
-            childId: invitation.childId._id,
+            role: "parent",
+            childId: primaryChildId,
+            childIds: childOidList,
             invitationToken: invitationToken,
-            invitationAccepted: true
+            invitationAccepted: true,
         });
 
         await parent.save();
 
-        const userResponse = {
-            id: parent._id.toString(),
-            name: parent.name,
-            email: parent.email,
-            username: parent.username,
-            role: parent.role,
-            childId: parent.childId?.toString?.() || String(parent.childId),
-        };
-        const token = jwt.sign(userResponse, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
+        const token = jwt.sign(buildParentJwtPayload(parent), process.env.JWT_SECRET, {
+            expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+        });
 
-        // Update invitation status
-        invitation.status = 'accepted';
-        invitation.acceptedAt = new Date();
-        await invitation.save();
-
-        // Update child's parents array
-        await Child.findByIdAndUpdate(
-            invitation.childId._id,
-            { $addToSet: { parents: parent._id } }
+        const acceptedAt = new Date();
+        const acceptRes = await Invitation.updateOne(
+            { _id: invitation._id, status: "pending" },
+            { $set: { status: "accepted", acceptedAt } }
         );
-
-        // Teacher (or lead teacher when admin invited) gets active access to this child's data
-        try {
-            const childDoc = await Child.findById(invitation.childId._id);
-            if (invitation.sentByRole === "teacher") {
-                await AccessGrant.findOneAndUpdate(
-                    {
-                        childId: invitation.childId._id,
-                        teacherId: invitation.sentBy,
-                        parentId: parent._id,
-                    },
-                    { $set: { status: "active", initiatedBy: "teacher" } },
-                    { upsert: true, new: true }
-                );
-            } else if (invitation.sentByRole === "admin" && childDoc?.leadTeacher) {
-                const lead = await Teacher.findOne({ name: childDoc.leadTeacher });
-                if (lead) {
-                    await AccessGrant.findOneAndUpdate(
-                        {
-                            childId: invitation.childId._id,
-                            teacherId: lead._id,
-                            parentId: parent._id,
-                        },
-                        { $set: { status: "active", initiatedBy: "teacher" } },
-                        { upsert: true, new: true }
-                    );
-                }
-            }
-        } catch (grantErr) {
-            console.error("AccessGrant on parent registration:", grantErr.message);
+        if (acceptRes.modifiedCount !== 1) {
+            return res.status(400).json({ message: "This invitation has already been used" });
         }
 
-        if (invitation.enactEmailExists === true) {
-            void enableEnactRecordingForBainumParent({
-                email: invitation.email,
-                baniumChildId: invitation.childId._id.toString(),
-            });
+        for (const oid of childOidList) {
+            await Child.findByIdAndUpdate(oid, { $addToSet: { parents: parent._id } });
+            await applyAccessGrantsAndEnactForChild(invitation, parent._id, oid);
         }
+
+        await Child.updateMany(
+            { _id: { $in: childOidList } },
+            { $set: { invitedParentEmail: invitation.email.trim().toLowerCase() } }
+        );
 
         res.status(201).json({
             message: "Parent account created successfully",
@@ -337,8 +391,8 @@ export const registerParent = async (req, res) => {
         });
     } catch (error) {
         console.error("Parent registration error:", error);
-        res.status(500).json({ 
-            message: error.message || "Internal server error" 
+        res.status(500).json({
+            message: error.message || "Internal server error",
         });
     }
 };

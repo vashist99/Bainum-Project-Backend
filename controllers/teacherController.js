@@ -1,5 +1,6 @@
 import { Teacher, Parent } from "../models/User.js";
-import { hasActiveParentTeacherGrant } from "../lib/accessGrantHelpers.js";
+import { hasActiveParentTeacherGrantForAnyChild } from "../lib/accessGrantHelpers.js";
+import { getResolvedChildIdStringsForParent } from "../lib/parentChildHelpers.js";
 import AccessGrant from "../models/AccessGrant.js";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
@@ -101,19 +102,23 @@ export const createTeacher = async (req, res) => {
 export const getAllTeachers = async (req, res) => {
     try {
         const user = req.user;
-        if (user?.role === "parent" && user.childId) {
+        if (user?.role === "parent") {
             const parent = await Parent.findById(user.id);
             if (!parent) {
                 return res.status(404).json({ message: "Parent not found" });
             }
+            const childIdStrs = await getResolvedChildIdStringsForParent(parent);
+            if (childIdStrs.length === 0) {
+                return res.status(200).json({ teachers: [] });
+            }
             const grants = await AccessGrant.find({
                 parentId: parent._id,
-                childId: user.childId,
+                childId: { $in: childIdStrs },
                 status: "active",
             })
                 .select("teacherId")
                 .lean();
-            const ids = grants.map((g) => g.teacherId).filter(Boolean);
+            const ids = [...new Set(grants.map((g) => g.teacherId).filter(Boolean))];
             if (ids.length === 0) {
                 return res.status(200).json({ teachers: [] });
             }
@@ -141,12 +146,13 @@ export const getTeacherById = async (req, res) => {
             return res.status(404).json({ message: "Teacher not found" });
         }
 
-        if (req.user?.role === "parent" && req.user.childId) {
+        if (req.user?.role === "parent") {
             const parent = await Parent.findById(req.user.id);
             if (!parent) {
                 return res.status(404).json({ message: "Parent not found" });
             }
-            const ok = await hasActiveParentTeacherGrant(parent._id, teacher._id, req.user.childId);
+            const childIdStrs = await getResolvedChildIdStringsForParent(parent);
+            const ok = await hasActiveParentTeacherGrantForAnyChild(parent._id, teacher._id, childIdStrs);
             if (!ok) {
                 return res.status(403).json({
                     code: "PARENT_TEACHER_ACCESS_DENIED",

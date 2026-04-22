@@ -1,6 +1,10 @@
 import mongoose from "mongoose";
 import AccessGrant from "../models/AccessGrant.js";
 import { Parent, Teacher } from "../models/User.js";
+import {
+    getResolvedChildIdStringsForParent,
+    parentMayAccessChild,
+} from "../lib/parentChildHelpers.js";
 
 /**
  * Parent requests permission to view a teacher's data (for their child).
@@ -18,19 +22,14 @@ export const requestTeacherAccessFromParent = async (req, res) => {
             return res.status(400).json({ message: "teacherId and childId are required" });
         }
 
-        const userChildId = user.childId?.toString?.() || String(user.childId);
-        if (userChildId !== String(childId)) {
-            return res.status(403).json({ message: "childId must match your linked child" });
+        const parent = await Parent.findById(user.id);
+        if (!parent || !(await parentMayAccessChild(parent, childId))) {
+            return res.status(403).json({ message: "childId must be one of your linked children" });
         }
 
         const teacher = await Teacher.findById(teacherId);
         if (!teacher) {
             return res.status(404).json({ message: "Teacher not found" });
-        }
-
-        const parent = await Parent.findById(user.id);
-        if (!parent) {
-            return res.status(404).json({ message: "Parent not found" });
         }
 
         const existing = await AccessGrant.findOne({
@@ -157,17 +156,29 @@ export const checkAccess = async (req, res) => {
             });
         }
 
-        if (user.role === "parent" && teacherId && user.childId) {
+        if (user.role === "parent" && teacherId) {
             const parent = await Parent.findById(user.id);
             if (!parent) {
                 return res.status(404).json({ message: "Parent not found" });
             }
-            const g = await AccessGrant.findOne({
-                parentId: parent._id,
-                teacherId,
-                childId: user.childId,
-                status: "active",
-            }).lean();
+            const childIdStrs = await getResolvedChildIdStringsForParent(parent);
+            const filterChildId = childId ? String(childId) : null;
+            if (filterChildId && !childIdStrs.includes(filterChildId)) {
+                return res.status(403).json({ message: "childId is not one of your linked children" });
+            }
+            const g = filterChildId
+                ? await AccessGrant.findOne({
+                      parentId: parent._id,
+                      teacherId,
+                      childId: filterChildId,
+                      status: "active",
+                  }).lean()
+                : await AccessGrant.findOne({
+                      parentId: parent._id,
+                      teacherId,
+                      childId: { $in: childIdStrs },
+                      status: "active",
+                  }).lean();
             return res.status(200).json({
                 canViewTeacher: !!g,
                 grantStatus: g ? "active" : null,

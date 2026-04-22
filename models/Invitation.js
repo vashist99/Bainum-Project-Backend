@@ -6,11 +6,14 @@ const invitationSchema = new mongoose.Schema({
         type: String, 
         required: true 
     },
-    childId: { 
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: "Child", 
-        required: true 
+    /** @deprecated Use childIds; kept for legacy records and first-child shorthand */
+    childId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Child",
+        required: false,
     },
+    /** All children covered by this invitation (min length 1 when saved). Order preserved. */
+    childIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "Child" }],
     token: { 
         type: String, 
         required: true, 
