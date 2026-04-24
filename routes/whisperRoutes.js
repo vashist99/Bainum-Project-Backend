@@ -6,6 +6,7 @@ import fs from 'fs';
 import mongoose from 'mongoose';
 import revaiController from '../controllers/whisperController.js';
 import classroomWhisperController from '../controllers/classroomWhisperController.js';
+import enactController from '../controllers/enactController.js';
 import Assessment from '../models/Assessment.js';
 import TeacherAssessment from '../models/TeacherAssessment.js';
 import authenticateToken from '../middleware/authMiddleware.js';
@@ -145,6 +146,9 @@ router.post('/whisper', upload.single('audio'), handleMulterError, revaiControll
 
 // Route to upload and process classroom audio (teachers and admins only)
 router.post('/whisper/classroom', authenticateToken, upload.single('audio'), handleMulterError, classroomWhisperController);
+
+// ENACT mobile app integration: submit audio by parent email, auto-save (no review step)
+router.post('/integrations/enact/submit', upload.single('audio'), handleMulterError, enactController);
 
 // Route to get all assessments for a child
 router.get('/assessments/child/:childId', authenticateToken, async (req, res) => {
