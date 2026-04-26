@@ -3,8 +3,6 @@ import Invitation from "../models/Invitation.js";
 import { Child, Parent } from "../models/User.js";
 import {
     guardSingleParentInviteAcceptance,
-    normalizeParentChildReferences,
-    applyAccessGrantsAndEnactForChild,
 } from "../lib/parentChildHelpers.js";
 import { sendInvitationEmail } from "../lib/emailService.js";
 import { fetchEnactCheckEmail } from "../lib/enactEmailCheck.js";
@@ -90,6 +88,11 @@ export const sendInvitation = async (req, res) => {
                     message: `Child not found: ${id}`,
                 });
             }
+            if (Array.isArray(child.parents) && child.parents.length > 0) {
+                return res.status(400).json({
+                    message: `${child.name}: this child already has a parent linked in the database. Invitation is disabled.`,
+                });
+            }
             const inviteGuard = guardSingleParentInviteAcceptance(child, parentForEmail?._id);
             if (!inviteGuard.ok) {
                 return res.status(400).json({
@@ -145,42 +148,6 @@ export const sendInvitation = async (req, res) => {
                 mergedWithPending: true,
                 emailSent: false,
                 invitationId: pendingInv._id,
-            });
-        }
-
-        if (parentForEmail?.invitationAccepted) {
-            await Parent.updateOne(
-                { _id: parentForEmail._id },
-                { $addToSet: { childIds: { $each: oidList } } }
-            );
-            const parentReload = await Parent.findById(parentForEmail._id);
-            normalizeParentChildReferences(parentReload);
-            await parentReload.save();
-
-            const enactCheck = await fetchEnactCheckEmail(emailNorm);
-            const enactEmailExists = enactCheck.ok === true && enactCheck.exists === true;
-            const synth = {
-                sentBy,
-                sentByRole,
-                email: emailNorm,
-                enactEmailExists,
-            };
-            for (const oid of oidList) {
-                await Child.updateOne(
-                    { _id: oid },
-                    {
-                        $addToSet: { parents: parentReload._id },
-                        $set: { invitedParentEmail: emailNorm },
-                    }
-                );
-                await applyAccessGrantsAndEnactForChild(synth, parentReload._id, oid);
-            }
-
-            return res.status(200).json({
-                message:
-                    "This parent already has an account. The new child(ren) were linked to that account. No invitation email was sent.",
-                linkedExistingParent: true,
-                emailSent: false,
             });
         }
 
