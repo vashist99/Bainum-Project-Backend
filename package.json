@@ -8,6 +8,7 @@
     "start": "node api/index.js",
     "test": "playwright test",
     "test:api": "playwright test tests/api",
+    "test:unit": "node --test 'tests/unit/**/*.test.js'",
     "lint": "echo \"No linter configured yet\" && exit 0"
   },
   "keywords": [],

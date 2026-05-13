@@ -35,7 +35,11 @@ jobs:
       run: npm run lint || echo "No lint script found - skipping"
       continue-on-error: true
       timeout-minutes: 2
-    
+
+    - name: Run unit tests (node:test)
+      run: npm run test:unit
+      timeout-minutes: 3
+
     - name: Install Playwright browsers
       run: npx playwright install --with-deps chromium
       continue-on-error: true

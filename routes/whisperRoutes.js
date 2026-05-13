@@ -7,6 +7,10 @@ import mongoose from 'mongoose';
 import revaiController from '../controllers/whisperController.js';
 import classroomWhisperController from '../controllers/classroomWhisperController.js';
 import enactController from '../controllers/enactController.js';
+import {
+    activityRecordingController,
+    validateActivityController,
+} from '../controllers/activityRecordingController.js';
 import Assessment from '../models/Assessment.js';
 import TeacherAssessment from '../models/TeacherAssessment.js';
 import authenticateToken from '../middleware/authMiddleware.js';
@@ -15,8 +19,9 @@ import {
     hasActiveTeacherChildGrant,
     hasActiveParentTeacherGrantForAnyChild,
 } from '../lib/accessGrantHelpers.js';
-import { Parent } from '../models/User.js';
+import { Parent, Teacher, Child } from '../models/User.js';
 import { parentMayAccessChild, getResolvedChildIdStringsForParent } from '../lib/parentChildHelpers.js';
+import { isPredefinedActivity, validateCustomActivity } from '../lib/activityValidator.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -147,6 +152,13 @@ router.post('/whisper', upload.single('audio'), handleMulterError, revaiControll
 // Route to upload and process classroom audio (teachers and admins only)
 router.post('/whisper/classroom', authenticateToken, upload.single('audio'), handleMulterError, classroomWhisperController);
 
+// "Record Activity" upload (teachers + parents). Returns transcript for review; client must
+// call /api/assessments/activity/accept to persist. Distributes to every supervised/linked child.
+router.post('/whisper/activity', authenticateToken, upload.single('audio'), handleMulterError, activityRecordingController);
+
+// Validate (and normalize) a custom activity label via LLM. Predefined activities bypass the LLM.
+router.post('/activities/validate', authenticateToken, validateActivityController);
+
 // ENACT mobile app integration: submit audio by parent email, auto-save (no review step)
 router.post('/integrations/enact/submit', upload.single('audio'), handleMulterError, enactController);
 
@@ -220,6 +232,127 @@ router.get('/assessments/child/:childId/latest', authenticateToken, async (req, 
     } catch (error) {
         console.error("Error fetching latest assessment:", error);
         res.status(500).json({ message: error.message });
+    }
+});
+
+// Accept "Record Activity" assessment and save one Assessment per supervised/linked child.
+// Teachers fan out to children where leadTeacher === teacher.name; parents fan out to childIds.
+router.post('/assessments/activity/accept', authenticateToken, async (req, res) => {
+    try {
+        const user = req.user;
+        const {
+            audioFileName,
+            transcript,
+            keywordCounts,
+            categoryWordCount,
+            ragSegments,
+            classificationMethod,
+            uploadedBy,
+            date,
+            wordCount,
+            durationSeconds,
+            wordsPerMinute,
+            categoryWPM,
+            activity,
+            activityContext,
+        } = req.body || {};
+
+        const finalActivity = String(activity || "").trim();
+        if (!finalActivity) {
+            return res.status(400).json({ message: "Activity is required." });
+        }
+
+        let expectedContext;
+        let childTargets;
+        if (user.role === "parent") {
+            expectedContext = "home";
+            const parent = await Parent.findById(user.id);
+            if (!parent) return res.status(404).json({ message: "Parent not found" });
+            const idStrs = await getResolvedChildIdStringsForParent(parent);
+            if (idStrs.length === 0) {
+                return res.status(400).json({ message: "No children linked to your account." });
+            }
+            const oids = idStrs.map((s) => new mongoose.Types.ObjectId(s));
+            childTargets = await Child.find({ _id: { $in: oids } });
+        } else if (user.role === "teacher") {
+            expectedContext = "school";
+            const teacher = await Teacher.findById(user.id);
+            if (!teacher) return res.status(404).json({ message: "Teacher not found" });
+            childTargets = await Child.find({ leadTeacher: teacher.name });
+            if (childTargets.length === 0) {
+                return res.status(400).json({ message: "No children assigned to you as lead teacher." });
+            }
+        } else {
+            return res.status(403).json({ message: "Only parents and teachers can record activities." });
+        }
+
+        if (activityContext && activityContext !== expectedContext) {
+            return res.status(400).json({
+                message: `Activity context mismatch (expected ${expectedContext}).`,
+            });
+        }
+
+        // Re-validate the activity server-side so an attacker can't bypass the LLM check.
+        // Match against the predefined list for this exact context only.
+        if (!isPredefinedActivity(finalActivity, expectedContext)) {
+            const decision = await validateCustomActivity(finalActivity, expectedContext);
+            if (!decision.accepted) {
+                return res.status(400).json({
+                    message: decision.reason || "Custom activity was not accepted for this context.",
+                });
+            }
+        }
+
+        const assessmentDate = date ? new Date(date) : new Date();
+        if (isNaN(assessmentDate.getTime())) {
+            return res.status(400).json({ message: "Invalid recording date" });
+        }
+
+        const base = {
+            audioFileName: audioFileName || "",
+            transcript: transcript || "",
+            scienceTalk: 0,
+            socialTalk: 0,
+            literatureTalk: 0,
+            languageDevelopment: 0,
+            keywordCounts: keywordCounts || { science: 0, social: 0, literature: 0, language: 0 },
+            categoryWordCount: categoryWordCount || { science: 0, social: 0, literature: 0, language: 0 },
+            ragScores: null,
+            ragSegments: ragSegments || null,
+            classificationMethod: classificationMethod || "keyword-only",
+            uploadedBy: uploadedBy || user.name || "Unknown",
+            date: assessmentDate,
+            transcriptExpiresAt: addOneMonth(assessmentDate),
+            wordCount: wordCount ?? null,
+            durationSeconds: durationSeconds ?? null,
+            wordsPerMinute: wordsPerMinute ?? null,
+            categoryWPM: categoryWPM ?? { science: null, social: null, literature: null, language: null },
+            activity: finalActivity,
+            activityContext: expectedContext,
+        };
+
+        const saved = await Promise.all(
+            childTargets.map(async (child) => {
+                const assessment = new Assessment({ ...base, childId: child._id });
+                await assessment.save();
+                return { assessmentId: assessment._id, childId: child._id, childName: child.name };
+            })
+        );
+
+        await recomputeAndSaveChildrenCohortStats().catch((err) =>
+            console.error("Failed to update children cohort stats after activity recording:", err)
+        );
+
+        return res.status(201).json({
+            message: `Activity recording saved for ${saved.length} child${saved.length === 1 ? "" : "ren"}.`,
+            activity: finalActivity,
+            activityContext: expectedContext,
+            count: saved.length,
+            assessments: saved,
+        });
+    } catch (error) {
+        console.error("Error saving activity assessment:", error);
+        return res.status(500).json({ message: error.message });
     }
 });
 

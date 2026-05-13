@@ -77,9 +77,21 @@ const teacherAssessmentSchema = new mongoose.Schema({
         type: String, 
         required: false 
     },
-    center: { 
-        type: String, 
-        required: false 
+    center: {
+        type: String,
+        required: false
+    },
+    /** Recorded activity context (e.g. "Mealtime", "Reading", or a validated custom activity). */
+    activity: {
+        type: String,
+        required: false,
+        trim: true
+    },
+    /** Where the activity took place — always "school" for teacher assessments. */
+    activityContext: {
+        type: String,
+        enum: ['school', 'home'],
+        required: false
     },
     wordCount: { type: Number, default: null },
     durationSeconds: { type: Number, default: null },
