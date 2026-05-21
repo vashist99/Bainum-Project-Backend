@@ -264,6 +264,7 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
 
         let expectedContext;
         let childTargets;
+        let teacherDoc = null;
         if (user.role === "parent") {
             expectedContext = "home";
             const parent = await Parent.findById(user.id);
@@ -276,9 +277,9 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             childTargets = await Child.find({ _id: { $in: oids } });
         } else if (user.role === "teacher") {
             expectedContext = "school";
-            const teacher = await Teacher.findById(user.id);
-            if (!teacher) return res.status(404).json({ message: "Teacher not found" });
-            childTargets = await Child.find({ leadTeacher: teacher.name });
+            teacherDoc = await Teacher.findById(user.id);
+            if (!teacherDoc) return res.status(404).json({ message: "Teacher not found" });
+            childTargets = await Child.find({ leadTeacher: teacherDoc.name });
             if (childTargets.length === 0) {
                 return res.status(400).json({ message: "No children assigned to you as lead teacher." });
             }
@@ -339,9 +340,50 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             })
         );
 
+        // When a teacher records a classroom activity, also persist a TeacherAssessment so the
+        // recording surfaces on the teacher's own profile alongside their classroom uploads.
+        let teacherAssessmentRef = null;
+        if (user.role === "teacher" && teacherDoc) {
+            const teacherAssessment = new TeacherAssessment({
+                teacherId: teacherDoc._id,
+                date: base.date,
+                audioFileName: base.audioFileName,
+                transcript: base.transcript,
+                transcriptExpiresAt: base.transcriptExpiresAt,
+                scienceTalk: 0,
+                socialTalk: 0,
+                literatureTalk: 0,
+                languageDevelopment: 0,
+                keywordCounts: base.keywordCounts,
+                categoryWordCount: base.categoryWordCount,
+                ragScores: null,
+                ragSegments: base.ragSegments,
+                classificationMethod: base.classificationMethod,
+                uploadedBy: base.uploadedBy,
+                center: teacherDoc.center || null,
+                activity: base.activity,
+                activityContext: base.activityContext,
+                wordCount: base.wordCount,
+                durationSeconds: base.durationSeconds,
+                wordsPerMinute: base.wordsPerMinute,
+                categoryWPM: base.categoryWPM,
+            });
+            await teacherAssessment.save();
+            teacherAssessmentRef = {
+                assessmentId: teacherAssessment._id,
+                teacherId: teacherDoc._id,
+            };
+        }
+
         await recomputeAndSaveChildrenCohortStats().catch((err) =>
             console.error("Failed to update children cohort stats after activity recording:", err)
         );
+
+        if (teacherAssessmentRef) {
+            await recomputeAndSaveTeachersCohortStats().catch((err) =>
+                console.error("Failed to update teachers cohort stats after activity recording:", err)
+            );
+        }
 
         return res.status(201).json({
             message: `Activity recording saved for ${saved.length} child${saved.length === 1 ? "" : "ren"}.`,
@@ -349,6 +391,7 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             activityContext: expectedContext,
             count: saved.length,
             assessments: saved,
+            teacherAssessment: teacherAssessmentRef,
         });
     } catch (error) {
         console.error("Error saving activity assessment:", error);
