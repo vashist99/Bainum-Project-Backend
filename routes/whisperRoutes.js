@@ -626,7 +626,10 @@ router.get('/assessments/teacher/:teacherId/latest', authenticateToken, async (r
     }
 });
 
-// Route to accept and save teacher assessment after transcript review
+// Route to accept and save teacher assessment after transcript review.
+// Also fans out a per-child Assessment for every child the teacher leads, so the
+// classroom recording surfaces on each supervised child's data page in addition
+// to the teacher's own profile (mirrors the Record Activity flow).
 router.post('/assessments/teacher/accept', authenticateToken, async (req, res) => {
     try {
         const { teacherId, audioFileName, transcript, scienceTalk, socialTalk, literatureTalk, languageDevelopment, keywordCounts, categoryWordCount, ragScores, ragSegments, classificationMethod, uploadedBy, date, center, wordCount, durationSeconds, wordsPerMinute, categoryWPM } = req.body;
@@ -639,6 +642,20 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
             ? new mongoose.Types.ObjectId(teacherId)
             : teacherId;
 
+        // Need the teacher's name to find the children they lead (Child.leadTeacher is a name string).
+        const teacherDoc = await Teacher.findById(teacherIdObject);
+        if (!teacherDoc) {
+            return res.status(404).json({ message: "Teacher not found" });
+        }
+
+        const assessmentDate = date ? new Date(date) : new Date();
+        const transcriptExpiresAt = addOneMonth(assessmentDate);
+        const safeKeywordCounts = keywordCounts || { science: 0, social: 0, literature: 0, language: 0 };
+        const safeCategoryWordCount = categoryWordCount || { science: 0, social: 0, literature: 0, language: 0 };
+        const safeCategoryWPM = categoryWPM ?? { science: null, social: null, literature: null, language: null };
+        const safeUploadedBy = uploadedBy || "Unknown";
+        const safeCenter = center || teacherDoc.center || null;
+
         const assessment = new TeacherAssessment({
             teacherId: teacherIdObject,
             audioFileName: audioFileName || '',
@@ -647,39 +664,76 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
             socialTalk: socialTalk || 0,
             literatureTalk: literatureTalk || 0,
             languageDevelopment: languageDevelopment || 0,
-            keywordCounts: keywordCounts || {
-                science: 0,
-                social: 0,
-                literature: 0,
-                language: 0
-            },
-            categoryWordCount: categoryWordCount || {
-                science: 0,
-                social: 0,
-                literature: 0,
-                language: 0
-            },
+            keywordCounts: safeKeywordCounts,
+            categoryWordCount: safeCategoryWordCount,
             ragScores: ragScores || null,
             ragSegments: ragSegments || null,
             classificationMethod: classificationMethod || 'keyword-only',
-            uploadedBy: uploadedBy || "Unknown",
-            date: date ? new Date(date) : new Date(),
-            transcriptExpiresAt: addOneMonth(date ? new Date(date) : new Date()),
-            center: center || null,
+            uploadedBy: safeUploadedBy,
+            date: assessmentDate,
+            transcriptExpiresAt,
+            center: safeCenter,
+            activityContext: 'school',
             wordCount: wordCount ?? null,
             durationSeconds: durationSeconds ?? null,
             wordsPerMinute: wordsPerMinute ?? null,
-            categoryWPM: categoryWPM ?? { science: null, social: null, literature: null, language: null }
+            categoryWPM: safeCategoryWPM,
         });
 
         await assessment.save();
         console.log("Teacher assessment saved after user acceptance");
 
+        // Fan out: every child whose leadTeacher matches this teacher's name receives
+        // an Assessment with the same transcript + metrics. `activity` is intentionally
+        // omitted (classroom uploads aren't tied to a labelled activity), but
+        // `activityContext: 'school'` makes the origin discoverable downstream.
+        const childTargets = await Child.find({ leadTeacher: teacherDoc.name });
+        const childAssessments = await Promise.all(
+            childTargets.map(async (child) => {
+                const childAssessment = new Assessment({
+                    childId: child._id,
+                    audioFileName: audioFileName || '',
+                    transcript: transcript || '',
+                    scienceTalk: scienceTalk || 0,
+                    socialTalk: socialTalk || 0,
+                    literatureTalk: literatureTalk || 0,
+                    languageDevelopment: languageDevelopment || 0,
+                    keywordCounts: safeKeywordCounts,
+                    categoryWordCount: safeCategoryWordCount,
+                    ragScores: ragScores || null,
+                    ragSegments: ragSegments || null,
+                    classificationMethod: classificationMethod || 'keyword-only',
+                    uploadedBy: safeUploadedBy,
+                    date: assessmentDate,
+                    transcriptExpiresAt,
+                    activityContext: 'school',
+                    wordCount: wordCount ?? null,
+                    durationSeconds: durationSeconds ?? null,
+                    wordsPerMinute: wordsPerMinute ?? null,
+                    categoryWPM: safeCategoryWPM,
+                });
+                await childAssessment.save();
+                return { assessmentId: childAssessment._id, childId: child._id, childName: child.name };
+            })
+        );
+
         await recomputeAndSaveTeachersCohortStats().catch((err) => console.error("Failed to update teachers cohort stats:", err));
+        if (childAssessments.length > 0) {
+            await recomputeAndSaveChildrenCohortStats().catch((err) =>
+                console.error("Failed to update children cohort stats after classroom upload:", err)
+            );
+        }
+
+        const childCount = childAssessments.length;
+        const message = childCount > 0
+            ? `Classroom recording saved for the teacher and ${childCount} child${childCount === 1 ? '' : 'ren'}.`
+            : "Teacher assessment saved successfully";
 
         res.status(201).json({
-            message: "Teacher assessment saved successfully",
-            assessment
+            message,
+            assessment,
+            childAssessments,
+            childCount,
         });
     } catch (error) {
         console.error("Error saving teacher assessment:", error);
