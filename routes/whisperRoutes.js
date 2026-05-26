@@ -22,6 +22,7 @@ import {
 import { Parent, Teacher, Child } from '../models/User.js';
 import { parentMayAccessChild, getResolvedChildIdStringsForParent } from '../lib/parentChildHelpers.js';
 import { isPredefinedActivity, validateCustomActivity } from '../lib/activityValidator.js';
+import { getSupervisedChildrenForTeacher } from '../lib/teacherChildHelpers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -279,7 +280,9 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             expectedContext = "school";
             teacherDoc = await Teacher.findById(user.id);
             if (!teacherDoc) return res.status(404).json({ message: "Teacher not found" });
-            childTargets = await Child.find({ leadTeacher: teacherDoc.name });
+            // See teacherChildHelpers: robust leadTeacher + AccessGrant lookup
+            // (legacy exact-name match silently dropped children whose leadTeacher had cosmetic drift).
+            childTargets = await getSupervisedChildrenForTeacher(teacherDoc);
             if (childTargets.length === 0) {
                 return res.status(400).json({ message: "No children assigned to you as lead teacher." });
             }
@@ -683,11 +686,13 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
         await assessment.save();
         console.log("Teacher assessment saved after user acceptance");
 
-        // Fan out: every child whose leadTeacher matches this teacher's name receives
-        // an Assessment with the same transcript + metrics. `activity` is intentionally
-        // omitted (classroom uploads aren't tied to a labelled activity), but
-        // `activityContext: 'school'` makes the origin discoverable downstream.
-        const childTargets = await Child.find({ leadTeacher: teacherDoc.name });
+        // Fan out: every child supervised by this teacher receives an Assessment with the
+        // same transcript + metrics. `activity` is intentionally omitted (classroom uploads
+        // aren't tied to a labelled activity), but `activityContext: 'school'` makes the
+        // origin discoverable downstream. See teacherChildHelpers for the lookup heuristics
+        // (exact + case-insensitive trim + active AccessGrants) — the legacy exact-name
+        // match would silently drop children with any cosmetic drift in leadTeacher.
+        const childTargets = await getSupervisedChildrenForTeacher(teacherDoc);
         const childAssessments = await Promise.all(
             childTargets.map(async (child) => {
                 const childAssessment = new Assessment({

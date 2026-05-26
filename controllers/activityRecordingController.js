@@ -15,6 +15,7 @@ import {
     validateCustomActivity,
 } from "../lib/activityValidator.js";
 import { getResolvedChildIdStringsForParent } from "../lib/parentChildHelpers.js";
+import { getSupervisedChildrenForTeacher } from "../lib/teacherChildHelpers.js";
 
 dotenv.config();
 
@@ -45,7 +46,11 @@ async function resolveTargetChildren(user) {
     if (user.role === "teacher") {
         const teacher = await Teacher.findById(user.id);
         if (!teacher) return { error: { status: 404, message: "Teacher not found" } };
-        const children = await Child.find({ leadTeacher: teacher.name });
+        // Robust lookup: exact leadTeacher match + case-insensitive trim + active AccessGrants.
+        // The legacy exact-string match silently returned 0 children whenever Child.leadTeacher
+        // drifted from Teacher.name by case or whitespace, which made the recording invisible
+        // on every child's data page.
+        const children = await getSupervisedChildrenForTeacher(teacher);
         if (children.length === 0) {
             return {
                 error: {
