@@ -1,10 +1,17 @@
 import mongoose from "mongoose";
 
 const assessmentSchema = new mongoose.Schema({
-    childId: { 
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: "Child", 
-        required: true 
+    childId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Child",
+        required: true
+    },
+    // Set when this assessment came from a classroom-scoped recording.
+    classroomId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Classroom",
+        required: false,
+        index: true,
     },
     date: { 
         type: Date, 
@@ -88,6 +95,12 @@ const assessmentSchema = new mongoose.Schema({
         type: String,
         enum: ['school', 'home'],
         required: false
+    },
+    /** Recording location (predefined catalog entry or a validated custom location). */
+    location: {
+        type: String,
+        required: false,
+        trim: true
     },
     wordCount: { type: Number, default: null },
     durationSeconds: { type: Number, default: null },

@@ -5,6 +5,11 @@ import revai from "../lib/revai.js";
 import ragClassifier from "../lib/ragClassifier.js";
 import { analyzeTranscript, extractKeywordSegments, computeCategoryWordCountFromSegments, deriveCategoryWordCountFromKeywordCounts } from "../lib/transcriptProcessor.js";
 import { Teacher } from "../models/User.js";
+import Classroom from "../models/Classroom.js";
+import { canManageClassroom } from "../lib/classroomHelpers.js";
+import { isSameCenter } from "../lib/centerNames.js";
+import { isPredefinedActivity, validateCustomActivity } from "../lib/activityValidator.js";
+import { resolveValidatedLocation } from "../lib/locationValidator.js";
 
 dotenv.config();
 
@@ -12,25 +17,71 @@ const classroomWhisperController = async (req, res) => {
     let filePath = null;
 
     try {
-        const { teacherId: bodyTeacherId, center, recordingDate } = req.body;
+        const { teacherId: bodyTeacherId, center, recordingDate, classroomId, activity, location } = req.body;
         const user = req.user;
+
+        // Classroom recordings are always school-context: validate the activity
+        // (required) and optional location BEFORE the expensive transcription.
+        const rawActivity = String(activity || "").trim();
+        if (!rawActivity) {
+            return res.status(400).json({ message: "Please choose or enter an activity before recording." });
+        }
+        if (rawActivity.length > 120) {
+            return res.status(400).json({ message: "Activity must be 120 characters or fewer." });
+        }
+        let finalActivity = rawActivity;
+        if (!isPredefinedActivity(rawActivity, "school")) {
+            const decision = await validateCustomActivity(rawActivity, "school");
+            if (!decision.accepted) {
+                return res.status(400).json({
+                    message: decision.reason || "Custom activity was not accepted for this context.",
+                    activityValidation: decision,
+                });
+            }
+            finalActivity = decision.normalized || rawActivity;
+        }
+
+        const locationResult = await resolveValidatedLocation(location, "school");
+        if (!locationResult.ok) {
+            return res.status(400).json({ message: locationResult.message });
+        }
+        const finalLocation = locationResult.location;
+
+        // Classroom-scoped uploads: authorize via the shared classroom gate so
+        // the assistant teacher can record too. Absent classroomId = legacy flow.
+        let classroomDoc = null;
+        if (classroomId) {
+            if (!mongoose.Types.ObjectId.isValid(classroomId)) {
+                return res.status(400).json({ message: "Invalid classroom id" });
+            }
+            classroomDoc = await Classroom.findById(classroomId);
+            if (!classroomDoc) {
+                return res.status(404).json({ message: "Classroom not found" });
+            }
+            if (!canManageClassroom(user, classroomDoc)) {
+                return res.status(403).json({ message: "You do not have access to this classroom" });
+            }
+        }
 
         // Determine teacherId based on role
         let teacherId;
         if (user.role === "teacher") {
             teacherId = user.id;
         } else if (user.role === "admin") {
-            if (!bodyTeacherId) {
+            // For classroom uploads an admin may omit teacherId — the recording
+            // is attributed to the classroom's lead teacher.
+            const effectiveTeacherId = bodyTeacherId || (classroomDoc ? String(classroomDoc.teacher) : null);
+            if (!effectiveTeacherId) {
                 return res.status(400).json({ message: "Teacher ID is required for admin uploads" });
             }
-            teacherId = bodyTeacherId;
+            teacherId = effectiveTeacherId;
 
             // Validate teacher exists and belongs to selected center (if center provided)
             const teacher = await Teacher.findById(teacherId);
             if (!teacher) {
                 return res.status(404).json({ message: "Teacher not found" });
             }
-            if (center && teacher.center !== center) {
+            if (center && !isSameCenter(teacher.center, center)) {
                 return res.status(400).json({ message: "Selected teacher does not belong to the chosen center" });
             }
         } else {
@@ -167,7 +218,11 @@ const classroomWhisperController = async (req, res) => {
             categoryWPM,
             uploadedBy,
             date: assessmentDate,
-            center: center || null,
+            center: center || classroomDoc?.center || null,
+            classroomId: classroomDoc ? classroomDoc._id : null,
+            activity: finalActivity,
+            activityContext: "school",
+            location: finalLocation,
             ragSegments: ragSegments || [],
             classificationMethod
         };

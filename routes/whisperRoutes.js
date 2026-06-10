@@ -10,7 +10,9 @@ import enactController from '../controllers/enactController.js';
 import {
     activityRecordingController,
     validateActivityController,
+    validateLocationController,
 } from '../controllers/activityRecordingController.js';
+import { resolveValidatedLocation } from '../lib/locationValidator.js';
 import Assessment from '../models/Assessment.js';
 import TeacherAssessment from '../models/TeacherAssessment.js';
 import authenticateToken from '../middleware/authMiddleware.js';
@@ -23,6 +25,8 @@ import { Parent, Teacher, Child } from '../models/User.js';
 import { parentMayAccessChild, getResolvedChildIdStringsForParent } from '../lib/parentChildHelpers.js';
 import { isPredefinedActivity, validateCustomActivity } from '../lib/activityValidator.js';
 import { getSupervisedChildrenForTeacher } from '../lib/teacherChildHelpers.js';
+import Classroom from '../models/Classroom.js';
+import { canManageClassroom } from '../lib/classroomHelpers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -160,6 +164,9 @@ router.post('/whisper/activity', authenticateToken, upload.single('audio'), hand
 // Validate (and normalize) a custom activity label via LLM. Predefined activities bypass the LLM.
 router.post('/activities/validate', authenticateToken, validateActivityController);
 
+// Validate (and normalize) a custom recording location via LLM. Predefined locations bypass the LLM.
+router.post('/locations/validate', authenticateToken, validateLocationController);
+
 // ENACT mobile app integration: submit audio by parent email, auto-save (no review step)
 router.post('/integrations/enact/submit', upload.single('audio'), handleMulterError, enactController);
 
@@ -256,6 +263,7 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             categoryWPM,
             activity,
             activityContext,
+            location,
         } = req.body || {};
 
         const finalActivity = String(activity || "").trim();
@@ -307,6 +315,13 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             }
         }
 
+        // Re-validate the (optional) location the same way — the client-side
+        // vetting in the modal can't be trusted on its own.
+        const locationResult = await resolveValidatedLocation(location, expectedContext);
+        if (!locationResult.ok) {
+            return res.status(400).json({ message: locationResult.message });
+        }
+
         const assessmentDate = date ? new Date(date) : new Date();
         if (isNaN(assessmentDate.getTime())) {
             return res.status(400).json({ message: "Invalid recording date" });
@@ -333,6 +348,7 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             categoryWPM: categoryWPM ?? { science: null, social: null, literature: null, language: null },
             activity: finalActivity,
             activityContext: expectedContext,
+            location: locationResult.location,
         };
 
         const saved = await Promise.all(
@@ -366,6 +382,7 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
                 center: teacherDoc.center || null,
                 activity: base.activity,
                 activityContext: base.activityContext,
+                location: base.location,
                 wordCount: base.wordCount,
                 durationSeconds: base.durationSeconds,
                 wordsPerMinute: base.wordsPerMinute,
@@ -635,10 +652,43 @@ router.get('/assessments/teacher/:teacherId/latest', authenticateToken, async (r
 // to the teacher's own profile (mirrors the Record Activity flow).
 router.post('/assessments/teacher/accept', authenticateToken, async (req, res) => {
     try {
-        const { teacherId, audioFileName, transcript, scienceTalk, socialTalk, literatureTalk, languageDevelopment, keywordCounts, categoryWordCount, ragScores, ragSegments, classificationMethod, uploadedBy, date, center, wordCount, durationSeconds, wordsPerMinute, categoryWPM } = req.body;
+        const { teacherId, audioFileName, transcript, scienceTalk, socialTalk, literatureTalk, languageDevelopment, keywordCounts, categoryWordCount, ragScores, ragSegments, classificationMethod, uploadedBy, date, center, wordCount, durationSeconds, wordsPerMinute, categoryWPM, classroomId, activity, location } = req.body;
 
         if (!teacherId) {
             return res.status(400).json({ message: "Teacher ID is required" });
+        }
+
+        // Re-validate activity and location server-side (school context) so the
+        // client-side vetting can't be bypassed. Both optional here for legacy
+        // clients; the classroom modal always sends an activity.
+        const finalActivity = String(activity || "").trim() || null;
+        if (finalActivity && !isPredefinedActivity(finalActivity, "school")) {
+            const decision = await validateCustomActivity(finalActivity, "school");
+            if (!decision.accepted) {
+                return res.status(400).json({
+                    message: decision.reason || "Custom activity was not accepted for this context.",
+                });
+            }
+        }
+        const locationResult = await resolveValidatedLocation(location, "school");
+        if (!locationResult.ok) {
+            return res.status(400).json({ message: locationResult.message });
+        }
+
+        // Classroom-scoped accept: validate and authorize BEFORE any write so a
+        // rejected request leaves no orphaned TeacherAssessment behind.
+        let classroomDoc = null;
+        if (classroomId) {
+            if (!mongoose.Types.ObjectId.isValid(classroomId)) {
+                return res.status(400).json({ message: "Invalid classroom id" });
+            }
+            classroomDoc = await Classroom.findById(classroomId);
+            if (!classroomDoc) {
+                return res.status(404).json({ message: "Classroom not found" });
+            }
+            if (!canManageClassroom(req.user, classroomDoc)) {
+                return res.status(403).json({ message: "You do not have access to this classroom" });
+            }
         }
 
         const teacherIdObject = mongoose.Types.ObjectId.isValid(teacherId)
@@ -661,6 +711,7 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
 
         const assessment = new TeacherAssessment({
             teacherId: teacherIdObject,
+            classroomId: classroomDoc ? classroomDoc._id : undefined,
             audioFileName: audioFileName || '',
             transcript: transcript || '',
             scienceTalk: scienceTalk || 0,
@@ -676,7 +727,9 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
             date: assessmentDate,
             transcriptExpiresAt,
             center: safeCenter,
+            activity: finalActivity || undefined,
             activityContext: 'school',
+            location: locationResult.location || undefined,
             wordCount: wordCount ?? null,
             durationSeconds: durationSeconds ?? null,
             wordsPerMinute: wordsPerMinute ?? null,
@@ -687,16 +740,20 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
         console.log("Teacher assessment saved after user acceptance");
 
         // Fan out: every child supervised by this teacher receives an Assessment with the
-        // same transcript + metrics. `activity` is intentionally omitted (classroom uploads
-        // aren't tied to a labelled activity), but `activityContext: 'school'` makes the
-        // origin discoverable downstream. See teacherChildHelpers for the lookup heuristics
+        // same transcript + metrics, including the recording's activity and location
+        // (validated above against the school catalogs). See teacherChildHelpers for the lookup heuristics
         // (exact + case-insensitive trim + active AccessGrants) — the legacy exact-name
         // match would silently drop children with any cosmetic drift in leadTeacher.
-        const childTargets = await getSupervisedChildrenForTeacher(teacherDoc);
+        // Classroom-scoped accept fans out to the classroom's members only;
+        // the legacy path keeps the teacher-wide supervised-children fan-out.
+        const childTargets = classroomDoc
+            ? await Child.find({ _id: { $in: classroomDoc.children || [] } })
+            : await getSupervisedChildrenForTeacher(teacherDoc);
         const childAssessments = await Promise.all(
             childTargets.map(async (child) => {
                 const childAssessment = new Assessment({
                     childId: child._id,
+                    classroomId: classroomDoc ? classroomDoc._id : undefined,
                     audioFileName: audioFileName || '',
                     transcript: transcript || '',
                     scienceTalk: scienceTalk || 0,
@@ -711,7 +768,9 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
                     uploadedBy: safeUploadedBy,
                     date: assessmentDate,
                     transcriptExpiresAt,
+                    activity: finalActivity || undefined,
                     activityContext: 'school',
+                    location: locationResult.location || undefined,
                     wordCount: wordCount ?? null,
                     durationSeconds: durationSeconds ?? null,
                     wordsPerMinute: wordsPerMinute ?? null,

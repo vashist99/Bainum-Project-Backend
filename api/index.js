@@ -19,6 +19,7 @@ import whisperRoutes from "../routes/whisperRoutes.js";
 import invitationRoutes from "../routes/invitationRoutes.js";
 import teacherInvitationRoutes from "../routes/teacherInvitationRoutes.js";
 import accessRoutes from "../routes/accessRoutes.js";
+import classroomRoutes from "../routes/classroomRoutes.js";
 import requireIngestApiKey from "../middleware/requireIngestApiKey.js";
 import { ingestAssessmentByParentEmail } from "../controllers/assessmentIngestController.js";
 import Assessment from "../models/Assessment.js";
@@ -172,6 +173,7 @@ app.use("/api", whisperRoutes);
 app.use("/api/invitations", invitationRoutes);
 app.use("/api/teacher-invitations", teacherInvitationRoutes);
 app.use("/api/access", accessRoutes);
+app.use("/api/classrooms", classroomRoutes);
 
 app.listen(process.env.PORT, () => {
     console.log(`Server is running on port ${process.env.PORT}`);

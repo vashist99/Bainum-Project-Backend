@@ -14,6 +14,11 @@ import {
     isPredefinedActivity,
     validateCustomActivity,
 } from "../lib/activityValidator.js";
+import {
+    isPredefinedLocation,
+    validateCustomLocation,
+    resolveValidatedLocation,
+} from "../lib/locationValidator.js";
 import { getResolvedChildIdStringsForParent } from "../lib/parentChildHelpers.js";
 import { getSupervisedChildrenForTeacher } from "../lib/teacherChildHelpers.js";
 
@@ -82,7 +87,7 @@ export const activityRecordingController = async (req, res) => {
         const user = req.user;
         if (!user) return res.status(401).json({ message: "Authentication required" });
 
-        const { activity, recordingDate } = req.body || {};
+        const { activity, recordingDate, location } = req.body || {};
         const rawActivity = String(activity || "").trim();
         if (!rawActivity) {
             return res.status(400).json({ message: "Please choose or enter an activity before recording." });
@@ -117,6 +122,14 @@ export const activityRecordingController = async (req, res) => {
             }
             finalActivity = decision.normalized || rawActivity;
         }
+
+        // Validate the (optional) location the same way — predefined for this
+        // context bypasses the LLM, custom entries are vetted.
+        const locationResult = await resolveValidatedLocation(location, context);
+        if (!locationResult.ok) {
+            return res.status(400).json({ message: locationResult.message });
+        }
+        const finalLocation = locationResult.location;
 
         const abortController = new AbortController();
         req.on("aborted", () => abortController.abort());
@@ -208,6 +221,7 @@ export const activityRecordingController = async (req, res) => {
             classificationMethod,
             activity: finalActivity,
             activityContext: context,
+            location: finalLocation,
         };
 
         if (fs.existsSync(filePath)) {
@@ -273,9 +287,11 @@ export const validateActivityController = async (req, res) => {
 
         let expectedContext;
         if (user.role === "parent") expectedContext = "home";
-        else if (user.role === "teacher") expectedContext = "school";
+        // Admins validate against the school list too — they upload classroom
+        // recordings on a teacher's behalf.
+        else if (user.role === "teacher" || user.role === "admin") expectedContext = "school";
         else {
-            return res.status(403).json({ message: "Only parents and teachers can validate activities." });
+            return res.status(403).json({ message: "Only parents, teachers, and admins can validate activities." });
         }
 
         if (isPredefinedActivity(activity, expectedContext)) {
@@ -295,3 +311,45 @@ export const validateActivityController = async (req, res) => {
         return res.status(500).json({ message: error.message || "Validation failed" });
     }
 };
+
+/**
+ * POST /api/locations/validate
+ * Body: { location }
+ * Mirrors /api/activities/validate: parents validate against the home list,
+ * teachers and admins against the school list; predefined locations bypass the LLM.
+ */
+export const validateLocationController = async (req, res) => {
+    try {
+        const user = req.user;
+        if (!user) return res.status(401).json({ message: "Authentication required" });
+
+        const { location } = req.body || {};
+        if (!location || typeof location !== "string") {
+            return res.status(400).json({ message: "location is required" });
+        }
+
+        let expectedContext;
+        if (user.role === "parent") expectedContext = "home";
+        else if (user.role === "teacher" || user.role === "admin") expectedContext = "school";
+        else {
+            return res.status(403).json({ message: "Only parents, teachers, and admins can validate locations." });
+        }
+
+        if (isPredefinedLocation(location, expectedContext)) {
+            return res.json({
+                accepted: true,
+                reason: "Predefined location.",
+                normalized: String(location).trim(),
+                context: expectedContext,
+                predefined: true,
+            });
+        }
+
+        const decision = await validateCustomLocation(location, expectedContext);
+        return res.json({ ...decision, context: expectedContext, predefined: false });
+    } catch (error) {
+        console.error("[validateLocation] error:", error);
+        return res.status(500).json({ message: error.message || "Validation failed" });
+    }
+};
+
