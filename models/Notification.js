@@ -6,14 +6,6 @@ import mongoose from "mongoose";
  * creation. We do NOT track read/unread state — the bell badge counts
  * "alive" notifications and the user can dismiss early via
  * DELETE /api/notifications/:id, but the TTL is the lifecycle guarantee.
- *
- * `type` is an open enum so future event kinds can be added without a
- * schema migration; this change wires up `classroom-added` and
- * `classroom-removed`.
- *
- * `classroomName` is denormalized at creation time so a later rename
- * or hard-delete of the classroom does not leave the notification text
- * out of sync.
  */
 const notificationSchema = new mongoose.Schema(
     {
@@ -29,7 +21,13 @@ const notificationSchema = new mongoose.Schema(
         },
         type: {
             type: String,
-            enum: ["classroom-added", "classroom-removed"],
+            enum: [
+                "classroom-added",
+                "classroom-removed",
+                "child-note-added",
+                "classroom-note-added",
+                "classroom-recording-added",
+            ],
             required: true,
         },
         classroomId: {
@@ -39,18 +37,20 @@ const notificationSchema = new mongoose.Schema(
             index: true,
         },
         classroomName: { type: String, default: "" },
+        childId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Child",
+            default: null,
+            index: true,
+        },
+        childName: { type: String, default: "" },
         message: { type: String, required: true },
         expiresAt: { type: Date, required: true },
     },
     { timestamps: { createdAt: true, updatedAt: false } }
 );
 
-// Self-pruning collection: MongoDB's TTL monitor (runs ~every 60s)
-// removes any document whose `expiresAt` is in the past.
 notificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-
-// Compound query path used by the bell dropdown and by the teacher
-// idempotency check ("has T already been notified about classroom C?").
 notificationSchema.index({ recipientId: 1, createdAt: -1 });
 
 const Notification = mongoose.model("Notification", notificationSchema);

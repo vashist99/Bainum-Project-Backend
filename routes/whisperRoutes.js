@@ -28,6 +28,7 @@ import { getSupervisedChildrenForTeacher } from '../lib/teacherChildHelpers.js';
 import Classroom from '../models/Classroom.js';
 import { canManageClassroom } from '../lib/classroomHelpers.js';
 import { transcriptExpiryFrom } from '../lib/transcriptRetention.js';
+import { fanOutClassroomRecordingAddedNotifications } from '../lib/notificationService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -779,6 +780,26 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
             await recomputeAndSaveChildrenCohortStats().catch((err) =>
                 console.error("Failed to update children cohort stats after classroom upload:", err)
             );
+        }
+
+        if (
+            classroomDoc &&
+            (req.user?.role === "admin" || req.user?.role === "teacher")
+        ) {
+            try {
+                const parentIds = (classroomDoc.parents || []).map(
+                    (p) => p._id ?? p
+                );
+                await fanOutClassroomRecordingAddedNotifications({
+                    classroom: classroomDoc,
+                    parentIds,
+                });
+            } catch (notifyErr) {
+                console.error(
+                    "[whisperRoutes] classroom recording notification failed:",
+                    notifyErr.message
+                );
+            }
         }
 
         const childCount = childAssessments.length;
