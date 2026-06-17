@@ -16,6 +16,9 @@ function queryReturning(value) {
         select() {
             return chain;
         },
+        populate() {
+            return chain;
+        },
         lean() {
             return promise;
         },
@@ -76,7 +79,7 @@ describe("getSupervisedChildrenForTeacher", () => {
             { _id: CHILD_3, name: "Carol" },
         ];
         childFindMock = t.mock.method(Child, "find", () =>
-            Promise.resolve(found)
+            queryReturning(found)
         );
 
         const result = await getSupervisedChildrenForTeacher({ _id: TEACHER_ID });
@@ -130,7 +133,7 @@ describe("getSupervisedChildrenForTeacher", () => {
             queryReturning([{ childId: CHILD_1 }])
         );
         childFindMock = t.mock.method(Child, "find", () =>
-            Promise.resolve([{ _id: CHILD_1, name: "Solo" }])
+            queryReturning([{ _id: CHILD_1, name: "Solo" }])
         );
 
         const result = await getSupervisedChildrenForTeacher({ _id: TEACHER_ID });
@@ -146,7 +149,7 @@ describe("getSupervisedChildrenForTeacher", () => {
             queryReturning([{}, { childId: null }, { childId: CHILD_2 }])
         );
         childFindMock = t.mock.method(Child, "find", () =>
-            Promise.resolve([
+            queryReturning([
                 { _id: CHILD_1, name: "Alice" },
                 { _id: CHILD_2, name: "Bob" },
             ])
@@ -168,7 +171,7 @@ describe("getSupervisedChildrenForTeacher", () => {
             queryReturning([])
         );
         childFindMock = t.mock.method(Child, "find", () =>
-            Promise.resolve([{ _id: CHILD_1 }])
+            queryReturning([{ _id: CHILD_1 }])
         );
 
         await getSupervisedChildrenForTeacher({ _id: TEACHER_ID });
