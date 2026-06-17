@@ -139,61 +139,60 @@ test.describe('Classroom Lifecycle API Endpoints', () => {
         expect(after.status()).toBe(404);
     });
 
-    // ─── PATCH /api/classrooms/:id/children ──────────────────────────────
-    test('PATCH /api/classrooms/:id/children - requires authentication', async ({ request }) => {
-        const response = await request.patch(
-            `${API_BASE}/classrooms/64b0000000000000000000ff/children`,
-            { data: { addChildId: '64b0000000000000000000c1' } }
+    // ─── DELETE /api/classrooms/:id/children/:childId ────────────────────
+    //
+    // Smoke checks: 401 on no auth, 400 on bad ids, 404 on missing
+    // room, 403 for unauthorized roles. Deeper assertions on the
+    // parent-prune + notification fan-out live in the unit tests in
+    // backend/tests/unit/classroomControllerLifecycle.test.js.
+    test('DELETE /api/classrooms/:id/children/:childId - requires authentication', async ({ request }) => {
+        const response = await request.delete(
+            `${API_BASE}/classrooms/64b0000000000000000000ff/children/64b0000000000000000000c1`
         );
         expect([401, 404]).toContain(response.status());
     });
 
-    test('PATCH /api/classrooms/:id/children - teacher forbidden (admin-only)', async ({ request }) => {
-        if (!teacherToken) {
+    test('DELETE /api/classrooms/:id/children/:childId - 400 on bad ids', async ({ request }) => {
+        if (!adminToken) {
             test.skip();
             return;
         }
-        // Find any classroom the teacher leads so the 403 isn't masked by 404.
-        const list = await request.get(`${API_BASE}/classrooms`, {
-            headers: { Authorization: `Bearer ${teacherToken}` },
-        });
-        if (list.status() !== 200) {
-            test.skip();
-            return;
-        }
-        const led = ((await list.json()).classrooms || []).find((c) => c.role === 'lead');
-        if (!led) {
-            test.skip();
-            return;
-        }
-        const response = await request.patch(
-            `${API_BASE}/classrooms/${led.id}/children`,
-            {
-                headers: { Authorization: `Bearer ${teacherToken}` },
-                data: { addChildId: '64b0000000000000000000c1' },
-            }
+        const response = await request.delete(
+            `${API_BASE}/classrooms/not-an-id/children/64b0000000000000000000c1`,
+            { headers: { Authorization: `Bearer ${adminToken}` } }
         );
-        expect(response.status()).toBe(403);
-        const body = await response.json();
-        expect(body.message).toMatch(/admin/i);
+        expect([400, 404]).toContain(response.status());
     });
 
-    test('PATCH /api/classrooms/:id/children - parent forbidden', async ({ request }) => {
+    test('DELETE /api/classrooms/:id/children/:childId - parent forbidden', async ({ request }) => {
         if (!parentToken) {
             test.skip();
             return;
         }
-        const response = await request.patch(
-            `${API_BASE}/classrooms/64b0000000000000000000ff/children`,
-            {
-                headers: { Authorization: `Bearer ${parentToken}` },
-                data: { addChildId: '64b0000000000000000000c1' },
-            }
+        const response = await request.delete(
+            `${API_BASE}/classrooms/64b0000000000000000000ff/children/64b0000000000000000000c1`,
+            { headers: { Authorization: `Bearer ${parentToken}` } }
         );
+        // 403 (auth ok, role wrong) or 404 (room doesn't exist) — both
+        // prove the parent could not bypass auth.
         expect([403, 404]).toContain(response.status());
     });
 
-    test('PATCH /api/classrooms/:id/children - 400 when neither addChildId nor removeChildId', async ({ request }) => {
+    test('DELETE /api/classrooms/:id/children/:childId - 404 on unknown classroom for admin', async ({ request }) => {
+        if (!adminToken) {
+            test.skip();
+            return;
+        }
+        const response = await request.delete(
+            `${API_BASE}/classrooms/64b0000000000000000000ff/children/64b0000000000000000000c1`,
+            { headers: { Authorization: `Bearer ${adminToken}` } }
+        );
+        expect(response.status()).toBe(404);
+    });
+
+    // PATCH /api/classrooms/:id/children no longer exists. A stale
+    // client that still calls it should get a 404 from express.
+    test('PATCH /api/classrooms/:id/children - endpoint is gone (404 / 405)', async ({ request }) => {
         if (!adminToken) {
             test.skip();
             return;
@@ -202,104 +201,13 @@ test.describe('Classroom Lifecycle API Endpoints', () => {
             `${API_BASE}/classrooms/64b0000000000000000000ff/children`,
             {
                 headers: { Authorization: `Bearer ${adminToken}` },
-                data: {},
+                data: { addChildId: '64b0000000000000000000c1' },
             }
         );
-        // 400 (empty body rejected) or 404 (validated id checked first) —
-        // both prove neither/both branch never wrote anything.
-        expect([400, 404]).toContain(response.status());
-    });
-
-    test('PATCH /api/classrooms/:id/children - 400 when BOTH addChildId and removeChildId', async ({ request }) => {
-        if (!adminToken) {
-            test.skip();
-            return;
-        }
-        const response = await request.patch(
-            `${API_BASE}/classrooms/64b0000000000000000000ff/children`,
-            {
-                headers: { Authorization: `Bearer ${adminToken}` },
-                data: {
-                    addChildId: '64b0000000000000000000c1',
-                    removeChildId: '64b0000000000000000000c2',
-                },
-            }
-        );
-        expect([400, 404]).toContain(response.status());
-    });
-
-    test('PATCH /api/classrooms/:id/children - add → remove round trip is idempotent', async ({ request }) => {
-        if (!adminToken) {
-            test.skip();
-            return;
-        }
-        // Pull a classroom + an eligible same-center child for the round trip.
-        const classes = await request.get(`${API_BASE}/classrooms`, {
-            headers: { Authorization: `Bearer ${adminToken}` },
-        });
-        if (classes.status() !== 200) {
-            test.skip();
-            return;
-        }
-        const classroom = ((await classes.json()).classrooms || [])[0];
-        if (!classroom) {
-            test.skip();
-            return;
-        }
-        const childrenResponse = await request.get(`${API_BASE}/children`, {
-            headers: { Authorization: `Bearer ${adminToken}` },
-        });
-        if (childrenResponse.status() !== 200) {
-            test.skip();
-            return;
-        }
-        const child = ((await childrenResponse.json()).children || []).find(
-            (c) =>
-                (c.center || '').trim().toLowerCase() ===
-                (classroom.center || '').trim().toLowerCase()
-        );
-        if (!child) {
-            test.skip();
-            return;
-        }
-        const childId = child._id || child.id;
-
-        // Idempotency: a 2nd add of the same child still 200s with changed:false.
-        const add1 = await request.patch(
-            `${API_BASE}/classrooms/${classroom.id}/children`,
-            {
-                headers: { Authorization: `Bearer ${adminToken}` },
-                data: { addChildId: childId },
-            }
-        );
-        expect(add1.status()).toBe(200);
-        const add1Body = await add1.json();
-        expect(add1Body.ok).toBe(true);
-        expect(add1Body.op).toBe('added');
-
-        const add2 = await request.patch(
-            `${API_BASE}/classrooms/${classroom.id}/children`,
-            {
-                headers: { Authorization: `Bearer ${adminToken}` },
-                data: { addChildId: childId },
-            }
-        );
-        expect(add2.status()).toBe(200);
-        expect((await add2.json()).changed).toBe(false);
-
-        // Remove brings the membership back to its starting state when the
-        // child wasn't a member at the top of the test; otherwise leave it.
-        if (add1Body.changed === true) {
-            const remove = await request.patch(
-                `${API_BASE}/classrooms/${classroom.id}/children`,
-                {
-                    headers: { Authorization: `Bearer ${adminToken}` },
-                    data: { removeChildId: childId },
-                }
-            );
-            expect(remove.status()).toBe(200);
-            expect((await remove.json()).op).toBe('removed');
-        }
+        // Express returns 404 by default for unknown routes; some
+        // proxies translate it to 405. Both are acceptable proofs
+        // that the endpoint is no longer mounted.
+        expect([404, 405]).toContain(response.status());
     });
 
     // ─── GET /api/classrooms/:id/transcripts ─────────────────────────────

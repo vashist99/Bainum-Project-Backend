@@ -1,6 +1,7 @@
 import TeacherInvitation from '../models/TeacherInvitation.js';
 import { Teacher } from '../models/User.js';
 import { sendTeacherInvitationEmail } from '../lib/emailService.js';
+import { readSchoolFromBody } from '../lib/schoolFieldAlias.js';
 
 /**
  * Send invitation to teacher
@@ -8,7 +9,8 @@ import { sendTeacherInvitationEmail } from '../lib/emailService.js';
  */
 export const sendTeacherInvitation = async (req, res) => {
     try {
-        const { email, firstName, lastName, education, dateOfBirth, center } = req.body;
+        const { email, firstName, lastName, education, dateOfBirth } = req.body;
+        const school = readSchoolFromBody(req.body);
         
         const { id: sentBy, role: sentByRole, name: inviterName } = req.user || {};
 
@@ -26,9 +28,9 @@ export const sendTeacherInvitation = async (req, res) => {
         }
 
         // Validate required fields
-        if (!email || !firstName || !lastName || !education || !dateOfBirth || !center) {
+        if (!email || !firstName || !lastName || !education || !dateOfBirth || !school) {
             return res.status(400).json({ 
-                message: "All fields are required: email, firstName, lastName, education, dateOfBirth, center" 
+                message: "All fields are required: email, firstName, lastName, education, dateOfBirth, school" 
             });
         }
 
@@ -84,7 +86,7 @@ export const sendTeacherInvitation = async (req, res) => {
             lastName,
             education,
             dateOfBirth: new Date(dateOfBirth),
-            center,
+            center: school,
             token,
             sentBy,
             sentByRole,

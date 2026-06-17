@@ -14,12 +14,30 @@ import {
     parseInvitePayload,
 } from "../lib/classroomHelpers.js";
 import { computeCohortStatsFromAssessments } from "../lib/cohortStatsService.js";
+import {
+    fanOutClassroomAddedNotifications,
+    fanOutClassroomRemovedNotification,
+} from "../lib/notificationService.js";
+import { readSchoolFromBody, withSchoolField } from "../lib/schoolFieldAlias.js";
 
-function toClassroomSummary(classroom, user) {
+/**
+ * Build the summary projection used by every classroom response. The
+ * `roleOverride` argument is what lets parent-read mode bypass the
+ * default teacher-centric `classroomRoleForUser` (which returns null for
+ * parents) and emit `role: "parent"` on the wire. Admins continue to
+ * receive `role: "admin"`.
+ */
+function toClassroomSummary(classroom, user, roleOverride = null) {
+    let role = roleOverride;
+    if (role == null) {
+        if (user?.role === "admin") role = "admin";
+        else role = classroomRoleForUser(user, classroom);
+    }
     return {
         id: classroom._id,
         name: classroom.name,
         center: classroom.center,
+        school: classroom.center,
         teacher: classroom.teacher
             ? { id: classroom.teacher._id ?? classroom.teacher, name: classroom.teacher.name ?? null }
             : null,
@@ -27,7 +45,7 @@ function toClassroomSummary(classroom, user) {
             ? { id: classroom.assistantTeacher._id ?? classroom.assistantTeacher, name: classroom.assistantTeacher.name ?? null }
             : null,
         childCount: Array.isArray(classroom.children) ? classroom.children.length : 0,
-        role: classroomRoleForUser(user, classroom),
+        role,
     };
 }
 
@@ -38,7 +56,8 @@ export const createClassroom = async (req, res) => {
             return res.status(403).json({ message: "Only admins and teachers can create classrooms" });
         }
 
-        const { name, center: bodyCenter, teacherId: bodyTeacherId, assistantTeacherId } = req.body;
+        const { name, teacherId: bodyTeacherId, assistantTeacherId } = req.body;
+        const bodyCenter = readSchoolFromBody(req.body);
         const trimmedName = typeof name === "string" ? name.trim() : "";
         if (!trimmedName) {
             return res.status(400).json({ message: "Classroom name is required" });
@@ -58,8 +77,8 @@ export const createClassroom = async (req, res) => {
             if (!bodyTeacherId) {
                 return res.status(400).json({ message: "Lead teacher is required" });
             }
-            if (!bodyCenter || !String(bodyCenter).trim()) {
-                return res.status(400).json({ message: "Center is required" });
+            if (!bodyCenter) {
+                return res.status(400).json({ message: "School is required" });
             }
             if (!mongoose.Types.ObjectId.isValid(bodyTeacherId)) {
                 return res.status(400).json({ message: "Invalid lead teacher id" });
@@ -69,9 +88,9 @@ export const createClassroom = async (req, res) => {
                 return res.status(404).json({ message: "Lead teacher not found" });
             }
             if (!isSameCenter(leadTeacher.center, bodyCenter)) {
-                return res.status(400).json({ message: "Selected teacher does not belong to the chosen center" });
+                return res.status(400).json({ message: "Selected teacher does not belong to the chosen school" });
             }
-            center = String(bodyCenter).trim();
+            center = bodyCenter;
         }
 
         let assistantDoc = null;
@@ -100,15 +119,29 @@ export const createClassroom = async (req, res) => {
         });
         await classroom.save();
 
+        // Notify the lead and (optional) assistant teacher that they
+        // have been assigned to this new classroom. Same fan-out helper
+        // as `inviteParents` so the dedupe logic stays in one place.
+        const teacherRecipients = [
+            { id: leadTeacher._id, role: "teacher" },
+        ];
+        if (assistantDoc) {
+            teacherRecipients.push({ id: assistantDoc._id, role: "teacher" });
+        }
+        await fanOutClassroomAddedNotifications({
+            classroom,
+            recipients: teacherRecipients,
+        });
+
         res.status(201).json({
             message: "Classroom created successfully",
-            classroom: {
+            classroom: withSchoolField({
                 id: classroom._id,
                 name: classroom.name,
                 center: classroom.center,
                 teacher: { id: leadTeacher._id, name: leadTeacher.name },
                 assistantTeacher: assistantDoc ? { id: assistantDoc._id, name: assistantDoc.name } : null,
-            },
+            }),
         });
     } catch (error) {
         console.error("Error creating classroom:", error);
@@ -167,6 +200,15 @@ export const listClassrooms = async (req, res) => {
     }
 };
 
+/**
+ * Returns `{ classroom, mode }` where mode is:
+ *   - "manage": admins and lead/assistant teachers (full payload + writes)
+ *   - "read":   parents who appear in the classroom's `parents` array
+ *               (read-only payloads, scoped to their own children)
+ *
+ * On any auth/lookup failure this writes the appropriate response body
+ * and returns null — callers should `if (!auth) return;`.
+ */
 async function findAuthorizedClassroom(req, res) {
     const { id } = req.params;
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -182,17 +224,52 @@ async function findAuthorizedClassroom(req, res) {
         res.status(404).json({ message: "Classroom not found" });
         return null;
     }
-    if (!canManageClassroom(req.user, classroom)) {
-        res.status(403).json({ message: "You do not have access to this classroom" });
-        return null;
+    if (canManageClassroom(req.user, classroom)) {
+        return { classroom, mode: "manage" };
     }
-    return classroom;
+    // Parent read-only: must be a parent role AND a member of the classroom.
+    if (req.user?.role === "parent") {
+        const uid = String(req.user.id ?? "");
+        const isMember = (classroom.parents || []).some(
+            (p) => String(p._id ?? p) === uid
+        );
+        if (isMember) return { classroom, mode: "read" };
+    }
+    res.status(403).json({ message: "You do not have access to this classroom" });
+    return null;
 }
 
 export const getClassroom = async (req, res) => {
     try {
-        const classroom = await findAuthorizedClassroom(req, res);
-        if (!classroom) return;
+        const auth = await findAuthorizedClassroom(req, res);
+        if (!auth) return;
+        const { classroom, mode } = auth;
+
+        // Parent read-only payload: hide the full roster, surface only
+        // the parent's own children. Counts come from the unfiltered
+        // arrays so the parent still sees the classroom's true size.
+        if (mode === "read") {
+            const uid = String(req.user.id);
+            const myChildIdSet = new Set();
+            for (const p of classroom.parents || []) {
+                if (String(p._id ?? p) === uid) {
+                    for (const cid of p.childIds || []) {
+                        myChildIdSet.add(String(cid));
+                    }
+                }
+            }
+            const myChildren = (classroom.children || [])
+                .filter((c) => myChildIdSet.has(String(c._id)))
+                .map((c) => ({ id: c._id, name: c.name }));
+
+            return res.status(200).json({
+                classroom: {
+                    ...toClassroomSummary(classroom, req.user, "parent"),
+                    children: myChildren,
+                    parents: [],
+                },
+            });
+        }
 
         res.status(200).json({
             classroom: {
@@ -216,8 +293,15 @@ export const getClassroom = async (req, res) => {
 
 export const getEligibleParents = async (req, res) => {
     try {
-        const classroom = await findAuthorizedClassroom(req, res);
-        if (!classroom) return;
+        const auth = await findAuthorizedClassroom(req, res);
+        if (!auth) return;
+        const { classroom, mode } = auth;
+        // Parents can't enumerate other parents.
+        if (mode !== "manage") {
+            return res
+                .status(403)
+                .json({ message: "Only admins and classroom teachers can list parents" });
+        }
 
         const memberParentIds = (classroom.parents || []).map((p) => String(p._id ?? p));
         const parents = await Parent.find({ invitationAccepted: true })
@@ -243,8 +327,14 @@ export const getEligibleParents = async (req, res) => {
 
 export const inviteParents = async (req, res) => {
     try {
-        const classroom = await findAuthorizedClassroom(req, res);
-        if (!classroom) return;
+        const auth = await findAuthorizedClassroom(req, res);
+        if (!auth) return;
+        const { classroom, mode } = auth;
+        if (mode !== "manage") {
+            return res
+                .status(403)
+                .json({ message: "Only admins and classroom teachers can add parents" });
+        }
 
         // New shape: invites: [{ parentId, childIds?: [] }] — per-child enrollment.
         // Legacy shape: parentIds: [] — enroll all eligible children.
@@ -332,10 +422,10 @@ export const inviteParents = async (req, res) => {
         // shares this classroom — gives the lead + assistant teacher
         // immediate visibility on the newly enrolled children without
         // forcing a separate access-request round trip.
-        const teacherIdsToSync = [classroom.teacher].filter(Boolean);
-        if (classroom.assistantTeacher) teacherIdsToSync.push(classroom.assistantTeacher);
+        const teacherIds = [classroom.teacher].filter(Boolean);
+        if (classroom.assistantTeacher) teacherIds.push(classroom.assistantTeacher);
         for (const parentId of addedParents) {
-            for (const tid of teacherIdsToSync) {
+            for (const tid of teacherIds) {
                 try {
                     await syncAccessGrantsForParentTeacherPair(parentId, tid);
                 } catch (grantErr) {
@@ -346,6 +436,26 @@ export const inviteParents = async (req, res) => {
                 }
             }
         }
+
+        // Fan out classroom-added notifications. Parents that were just
+        // added always get one. The lead/assistant teacher are notified
+        // the FIRST time they become responsible for this classroom; the
+        // helper's idempotency check (no unexpired `classroom-added`
+        // row for this recipient+classroom) prevents repeats on every
+        // subsequent invite. Failures are swallowed by the service —
+        // they must never block the membership write.
+        const teacherRecipients = teacherIds.map((id) => ({
+            id,
+            role: "teacher",
+        }));
+        const parentRecipients = addedParents.map((id) => ({
+            id,
+            role: "parent",
+        }));
+        await fanOutClassroomAddedNotifications({
+            classroom,
+            recipients: [...parentRecipients, ...teacherRecipients],
+        });
 
         res.status(200).json({
             message: `Added ${addedParents.length} parent${addedParents.length === 1 ? "" : "s"} to the classroom`,
@@ -461,109 +571,125 @@ export const deleteClassroom = async (req, res) => {
 };
 
 /**
- * PATCH /api/classrooms/:id/children
- * Body: exactly one of { addChildId, removeChildId } (strings).
+ * DELETE /api/classrooms/:id/children/:childId
  *
- * Admin-only manual override (D3): lead and assistant teachers cannot
- * mutate classroom membership directly — they go through the
- * parent-invitation flow. This endpoint exists for mis-enrollments,
- * mid-year transfers, sibling moves, and demo seeding.
+ * Authorization: admin OR the classroom's lead teacher (D7). Assistant
+ * teachers cannot remove children — same boundary as `deleteClassroom`.
  *
- * `addChildId` enforces same-center matching against `classroom.center`.
- * `removeChildId` is idempotent (returns `changed:false` when the child
- * was not in the classroom). Neither branch mutates parents.
+ * Semantics (single sequenced operation):
+ *  1. Pull this child from `classroom.children`.
+ *  2. Pull this classroom from `child.classrooms`.
+ *  3. Compute "parents of this child who now have ZERO remaining
+ *     children in the classroom" — those parents are pruned from
+ *     `classroom.parents` and notified with a `classroom-removed`
+ *     in-app notification.
+ *  4. Historical assessments (Assessment + TeacherAssessment) keep
+ *     their `classroomId` attribution. We do NOT rewrite past data;
+ *     the classroom homepage hides pruned children's transcripts
+ *     because they are no longer members, but their data still
+ *     belongs to that classroom historically (D7).
+ *
+ * Idempotent on `child not in classroom`: returns 200 with
+ * `changed:false`.
  */
-export const patchClassroomChildren = async (req, res) => {
+export const removeChildFromClassroom = async (req, res) => {
     try {
-        const { id } = req.params;
+        const { id, childId } = req.params;
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return res.status(400).json({ message: "Invalid classroom id" });
+        }
+        if (!mongoose.Types.ObjectId.isValid(childId)) {
+            return res.status(400).json({ message: "Invalid child id" });
         }
         if (!req.user) {
             return res.status(401).json({ message: "Authentication required" });
         }
-        if (req.user.role !== "admin") {
-            return res.status(403).json({
-                message: "Only admins can manually enroll or remove a child",
-            });
-        }
 
-        const { addChildId, removeChildId } = req.body || {};
-        const hasAdd =
-            typeof addChildId === "string" && addChildId.trim().length > 0;
-        const hasRemove =
-            typeof removeChildId === "string" && removeChildId.trim().length > 0;
-        if (hasAdd === hasRemove) {
-            return res.status(400).json({
-                message:
-                    "Body must include exactly one of addChildId or removeChildId",
-            });
-        }
-
-        const classroom = await Classroom.findById(id);
+        const classroom = await Classroom.findById(id).populate(
+            "parents",
+            "_id childIds"
+        );
         if (!classroom) {
             return res.status(404).json({ message: "Classroom not found" });
         }
 
-        if (hasAdd) {
-            if (!mongoose.Types.ObjectId.isValid(addChildId)) {
-                return res.status(400).json({ message: "Invalid child id" });
-            }
-            const child = await Child.findById(addChildId);
-            if (!child) {
-                return res.status(404).json({ message: "Child not found" });
-            }
-            if (!isSameCenter(child.center, classroom.center)) {
-                return res.status(409).json({
-                    message:
-                        "Child's center does not match the classroom's center",
-                });
-            }
-
-            const wasMember = (classroom.children || [])
-                .map((cid) => String(cid))
-                .includes(String(child._id));
-
-            await Classroom.updateOne(
-                { _id: classroom._id },
-                { $addToSet: { children: child._id } }
-            );
-            await Child.updateOne(
-                { _id: child._id },
-                { $addToSet: { classrooms: classroom._id } }
-            );
-
-            return res.status(200).json({
-                ok: true,
-                changed: !wasMember,
-                op: "added",
+        // Admin OR lead teacher only. Assistant teachers cannot remove.
+        const isAdmin = req.user.role === "admin";
+        const isLead =
+            req.user.role === "teacher" &&
+            String(req.user.id) === String(classroom.teacher);
+        if (!isAdmin && !isLead) {
+            return res.status(403).json({
+                message:
+                    "Only admins and the lead teacher can remove children from a classroom",
             });
         }
 
-        // removeChildId branch
-        if (!mongoose.Types.ObjectId.isValid(removeChildId)) {
-            return res.status(400).json({ message: "Invalid child id" });
-        }
+        const childIdStr = String(childId);
         const wasMember = (classroom.children || [])
-            .map((cid) => String(cid))
-            .includes(String(removeChildId));
+            .map((cid) => String(cid._id ?? cid))
+            .includes(childIdStr);
 
+        if (!wasMember) {
+            return res.status(200).json({
+                ok: true,
+                changed: false,
+                removedChildId: childIdStr,
+                removedParents: [],
+            });
+        }
+
+        // 1+2. Pull both sides.
         await Classroom.updateOne(
             { _id: classroom._id },
-            { $pull: { children: new mongoose.Types.ObjectId(removeChildId) } }
+            { $pull: { children: new mongoose.Types.ObjectId(childIdStr) } }
         );
         await Child.updateOne(
-            { _id: removeChildId },
+            { _id: childIdStr },
             { $pull: { classrooms: classroom._id } }
         );
 
+        // 3. Compute which parents are now orphaned in this classroom.
+        // A parent is orphaned iff (childIds ∩ classroom.children) is empty
+        // AFTER the pull above. The pulled child is the one being removed.
+        const remainingChildIds = new Set(
+            (classroom.children || [])
+                .map((cid) => String(cid._id ?? cid))
+                .filter((cid) => cid !== childIdStr)
+        );
+        const orphanedParents = [];
+        for (const parent of classroom.parents || []) {
+            const parentChildIds = (parent.childIds || []).map((cid) => String(cid));
+            const stillHasChild = parentChildIds.some((cid) =>
+                remainingChildIds.has(cid)
+            );
+            if (!stillHasChild) {
+                orphanedParents.push(parent._id);
+            }
+        }
+
+        if (orphanedParents.length > 0) {
+            await Classroom.updateOne(
+                { _id: classroom._id },
+                { $pull: { parents: { $in: orphanedParents } } }
+            );
+            // Notify each pruned parent that they were removed.
+            for (const parentId of orphanedParents) {
+                await fanOutClassroomRemovedNotification({
+                    classroom,
+                    parentId,
+                });
+            }
+        }
+
         return res.status(200).json({
             ok: true,
-            changed: wasMember,
-            op: "removed",
+            changed: true,
+            removedChildId: childIdStr,
+            removedParents: orphanedParents.map((id) => String(id)),
         });
     } catch (error) {
-        console.error("Error patching classroom children:", error);
+        console.error("Error removing child from classroom:", error);
         return res.status(500).json({ message: error.message });
     }
 };
@@ -579,8 +705,9 @@ export const patchClassroomChildren = async (req, res) => {
  */
 export const getClassroomTranscripts = async (req, res) => {
     try {
-        const classroom = await findAuthorizedClassroom(req, res);
-        if (!classroom) return;
+        const auth = await findAuthorizedClassroom(req, res);
+        if (!auth) return;
+        const { classroom, mode } = auth;
 
         const isAdmin = req.user?.role === "admin";
         const now = new Date();
@@ -603,16 +730,43 @@ export const getClassroomTranscripts = async (req, res) => {
                   ],
               };
 
+        // Parent read-only callers see only assessments tied to one of
+        // their OWN children, and never teacher-side recordings.
+        let childAssessmentFilter = { classroomId: classroom._id };
+        let teacherAssessmentFilter = { classroomId: classroom._id };
+        let includeTeacherRows = true;
+        if (mode === "read") {
+            const uid = String(req.user.id);
+            const myChildIdSet = new Set();
+            for (const p of classroom.parents || []) {
+                if (String(p._id ?? p) === uid) {
+                    for (const cid of p.childIds || []) {
+                        myChildIdSet.add(String(cid));
+                    }
+                }
+            }
+            const myChildOids = [...myChildIdSet].map(
+                (id) => new mongoose.Types.ObjectId(id)
+            );
+            childAssessmentFilter = {
+                classroomId: classroom._id,
+                childId: { $in: myChildOids },
+            };
+            includeTeacherRows = false;
+        }
+
         const [childAssessments, teacherAssessments] = await Promise.all([
-            Assessment.find({ classroomId: classroom._id, ...visibilityFilter })
+            Assessment.find({ ...childAssessmentFilter, ...visibilityFilter })
                 .populate("childId", "name")
                 .lean(),
-            TeacherAssessment.find({
-                classroomId: classroom._id,
-                ...visibilityFilter,
-            })
-                .populate("teacherId", "name")
-                .lean(),
+            includeTeacherRows
+                ? TeacherAssessment.find({
+                      ...teacherAssessmentFilter,
+                      ...visibilityFilter,
+                  })
+                      .populate("teacherId", "name")
+                      .lean()
+                : Promise.resolve([]),
         ]);
 
         const childRows = childAssessments.map((a) => ({
@@ -685,10 +839,31 @@ export const getClassroomTranscripts = async (req, res) => {
 
 export const getClassroomAssessments = async (req, res) => {
     try {
-        const classroom = await findAuthorizedClassroom(req, res);
-        if (!classroom) return;
+        const auth = await findAuthorizedClassroom(req, res);
+        if (!auth) return;
+        const { classroom, mode } = auth;
 
-        const childIds = (classroom.children || []).map((c) => c._id ?? c);
+        let childIds = (classroom.children || []).map((c) => c._id ?? c);
+
+        // Parent read-only: restrict assessments to the parent's own
+        // children so the per-child charts they're entitled to view are
+        // computed against the full classroom cohort baseline of just
+        // those children's rows (no other children's WPM bleed across).
+        if (mode === "read") {
+            const uid = String(req.user.id);
+            const myChildIdSet = new Set();
+            for (const p of classroom.parents || []) {
+                if (String(p._id ?? p) === uid) {
+                    for (const cid of p.childIds || []) {
+                        myChildIdSet.add(String(cid));
+                    }
+                }
+            }
+            childIds = childIds.filter((cid) =>
+                myChildIdSet.has(String(cid))
+            );
+        }
+
         const assessments = childIds.length === 0
             ? []
             : await Assessment.find({ childId: { $in: childIds } })

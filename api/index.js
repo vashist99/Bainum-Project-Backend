@@ -14,12 +14,14 @@ import authRoutes from "../routes/authRoutes.js";
 import childRoutes from "../routes/childRoutes.js";
 import teacherRoutes from "../routes/teacherRoutes.js";
 import centerRoutes from "../routes/centerRoutes.js";
+import schoolApiMount from "../middleware/schoolApiMount.js";
 import noteRoutes from "../routes/noteRoutes.js";
 import whisperRoutes from "../routes/whisperRoutes.js";
 import invitationRoutes from "../routes/invitationRoutes.js";
 import teacherInvitationRoutes from "../routes/teacherInvitationRoutes.js";
 import accessRoutes from "../routes/accessRoutes.js";
 import classroomRoutes from "../routes/classroomRoutes.js";
+import notificationRoutes from "../routes/notificationRoutes.js";
 import requireIngestApiKey from "../middleware/requireIngestApiKey.js";
 import { ingestAssessmentByParentEmail } from "../controllers/assessmentIngestController.js";
 import Assessment from "../models/Assessment.js";
@@ -167,6 +169,9 @@ app.get("/health", (req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/children", childRoutes);
 app.use("/api/teachers", teacherRoutes);
+// Primary mount: JSON keys `schools` / `school` on list/detail responses.
+app.use("/api/schools", schoolApiMount, centerRoutes);
+// Legacy compat: same router, legacy `centers` / `center` JSON keys.
 app.use("/api/centers", centerRoutes);
 app.use("/api/notes", noteRoutes);
 app.use("/api", whisperRoutes);
@@ -174,6 +179,7 @@ app.use("/api/invitations", invitationRoutes);
 app.use("/api/teacher-invitations", teacherInvitationRoutes);
 app.use("/api/access", accessRoutes);
 app.use("/api/classrooms", classroomRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 app.listen(process.env.PORT, () => {
     console.log(`Server is running on port ${process.env.PORT}`);

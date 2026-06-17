@@ -160,14 +160,14 @@ describe("validateAssistant", () => {
         assert.match(result.message, /same as the lead/i);
     });
 
-    test("rejects assistant from another center", () => {
+    test("rejects assistant from another school", () => {
         const result = validateAssistant({
             leadId: LEAD_ID,
             assistantDoc: { _id: ASSISTANT_ID, center: "Other Center" },
             classroomCenter: "Main Street Center",
         });
         assert.ok(!result.ok);
-        assert.match(result.message, /classroom's center/i);
+        assert.match(result.message, /classroom's school/i);
     });
 
     test("rejects missing assistant doc", () => {

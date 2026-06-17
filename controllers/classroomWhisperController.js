@@ -82,7 +82,7 @@ const classroomWhisperController = async (req, res) => {
                 return res.status(404).json({ message: "Teacher not found" });
             }
             if (center && !isSameCenter(teacher.center, center)) {
-                return res.status(400).json({ message: "Selected teacher does not belong to the chosen center" });
+                return res.status(400).json({ message: "Selected teacher does not belong to the chosen school" });
             }
         } else {
             return res.status(403).json({ message: "Only teachers and admins can upload classroom recordings" });

@@ -8,17 +8,21 @@ import {
     inviteParents,
     getClassroomAssessments,
     deleteClassroom,
-    patchClassroomChildren,
+    removeChildFromClassroom,
     getClassroomTranscripts,
 } from "../controllers/classroomController.js";
 
 const router = express.Router();
 
-// All classroom administration requires authentication; role-based access
-// (admin / lead / assistant — parents always 403) is enforced in the
-// controller via canManageClassroom (read/admin paths) or the per-route
-// role check (delete = admin or lead only; admin-manual-enrollment =
-// admin only).
+// All classroom routes require authentication. Role-based access is then
+// enforced inside the controller:
+//  - read paths (GET /:id, /:id/assessments, /:id/transcripts) allow
+//    admin + lead/assistant teachers (full) AND enrolled parents
+//    (scoped, read-only).
+//  - write paths (invite, child-removal) require admin or a classroom
+//    teacher; child-removal additionally requires admin or the lead
+//    (assistant teachers cannot remove children).
+//  - DELETE /:id (whole classroom) requires admin or the lead teacher.
 router.post("/", authenticateToken, createClassroom);
 router.get("/", authenticateToken, listClassrooms);
 router.get("/:id", authenticateToken, getClassroom);
@@ -26,7 +30,11 @@ router.get("/:id/eligible-parents", authenticateToken, getEligibleParents);
 router.post("/:id/invite", authenticateToken, inviteParents);
 router.get("/:id/assessments", authenticateToken, getClassroomAssessments);
 router.get("/:id/transcripts", authenticateToken, getClassroomTranscripts);
-router.patch("/:id/children", authenticateToken, patchClassroomChildren);
+router.delete(
+    "/:id/children/:childId",
+    authenticateToken,
+    removeChildFromClassroom
+);
 router.delete("/:id", authenticateToken, deleteClassroom);
 
 export default router;

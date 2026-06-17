@@ -7,12 +7,27 @@ import {
     parentMayAccessChild,
 } from "../lib/parentChildHelpers.js";
 import { getSupervisedChildrenForTeacher } from "../lib/teacherChildHelpers.js";
+import { readSchoolFromBody, withSchoolField, mapSchoolCollection } from "../lib/schoolFieldAlias.js";
+
+function childApiPayload(child) {
+    return withSchoolField({
+        id: child._id,
+        name: child.name,
+        role: child.role,
+        dateOfBirth: child.dateOfBirth,
+        gender: child.gender,
+        diagnosis: child.diagnosis,
+        primaryLanguage: child.primaryLanguage,
+        center: child.center,
+        classrooms: child.classrooms,
+    });
+}
 
 export const createChild = async (req, res) => {
     try {
-        const { name, dateOfBirth, gender, diagnosis, primaryLanguage, center } = req.body;
+        const school = readSchoolFromBody(req.body);
 
-        if (!name || !dateOfBirth || !gender || !diagnosis || !primaryLanguage || !center) {
+        if (!name || !dateOfBirth || !gender || !diagnosis || !primaryLanguage || !school) {
             return res.status(400).json({ message: "All fields are required" });
         }
 
@@ -30,7 +45,7 @@ export const createChild = async (req, res) => {
             gender,
             diagnosis,
             primaryLanguage,
-            center: String(center).trim(),
+            center: school,
             classrooms: [],
         });
 
@@ -38,17 +53,7 @@ export const createChild = async (req, res) => {
 
         res.status(201).json({
             message: "Child created successfully",
-            child: {
-                id: child._id,
-                name: child.name,
-                role: child.role,
-                dateOfBirth: child.dateOfBirth,
-                gender: child.gender,
-                diagnosis: child.diagnosis,
-                primaryLanguage: child.primaryLanguage,
-                center: child.center,
-                classrooms: child.classrooms,
-            },
+            child: childApiPayload(child),
         });
     } catch (error) {
         console.error("Error creating child:", error);
@@ -67,10 +72,10 @@ export const getAllChildren = async (req, res) => {
                 const children = await Child.find({
                     parents: { $in: acceptedParentIds },
                 });
-                return res.status(200).json({ children });
+                return res.status(200).json({ children: mapSchoolCollection(children) });
             }
             const children = await Child.find();
-            return res.status(200).json({ children });
+            return res.status(200).json({ children: mapSchoolCollection(children) });
         }
         if (user?.role === "teacher") {
             const teacher = await Teacher.findById(user.id);
@@ -82,7 +87,7 @@ export const getAllChildren = async (req, res) => {
             // teacher's invite-children picker; the full child page still
             // gates on a per-child AccessGrant.
             const children = await getSupervisedChildrenForTeacher(teacher);
-            return res.status(200).json({ children });
+            return res.status(200).json({ children: mapSchoolCollection(children) });
         }
         if (user?.role === "parent") {
             const parent = await Parent.findById(user.id);
@@ -95,10 +100,10 @@ export const getAllChildren = async (req, res) => {
             }
             const oids = idStrs.map((s) => new mongoose.Types.ObjectId(s));
             const children = await Child.find({ _id: { $in: oids } });
-            return res.status(200).json({ children });
+            return res.status(200).json({ children: mapSchoolCollection(children) });
         }
         const children = await Child.find();
-        res.status(200).json({ children });
+        res.status(200).json({ children: mapSchoolCollection(children) });
     } catch (error) {
         console.error("Error fetching children:", error);
         res.status(500).json({ message: error.message });
@@ -146,18 +151,18 @@ export const getChildById = async (req, res) => {
                     code: "TEACHER_ACCESS_DENIED",
                     message:
                         "The parent must accept your invitation (or approve access) before you can view this child's full data. You can send an invitation to the parent's email below.",
-                    child: {
+                    child: withSchoolField({
                         _id: child._id,
                         name: child.name,
                         center: child.center,
                         classrooms: child.classrooms,
-                    },
+                    }),
                 });
             }
             return res.status(403).json({ message: "You do not have access to this child's data" });
         }
         
-        res.status(200).json({ child });
+        res.status(200).json({ child: withSchoolField(child) });
     } catch (error) {
         console.error("Error fetching child:", error);
         res.status(500).json({ message: error.message });
@@ -166,10 +171,11 @@ export const getChildById = async (req, res) => {
 
 export const updateChild = async (req, res) => {
     try {
-        const { name, dateOfBirth, gender, diagnosis, primaryLanguage, center } = req.body;
+        const { name, dateOfBirth, gender, diagnosis, primaryLanguage } = req.body;
         const { id } = req.params;
+        const school = readSchoolFromBody(req.body);
 
-        if (!name || !dateOfBirth || !gender || !diagnosis || !primaryLanguage || !center) {
+        if (!name || !dateOfBirth || !gender || !diagnosis || !primaryLanguage || !school) {
             return res.status(400).json({ message: "All fields are required" });
         }
 
@@ -190,23 +196,13 @@ export const updateChild = async (req, res) => {
         child.gender = gender;
         child.diagnosis = diagnosis;
         child.primaryLanguage = primaryLanguage;
-        child.center = String(center).trim();
+        child.center = school;
 
         await child.save();
 
         res.status(200).json({
             message: "Child updated successfully",
-            child: {
-                id: child._id,
-                name: child.name,
-                role: child.role,
-                dateOfBirth: child.dateOfBirth,
-                gender: child.gender,
-                diagnosis: child.diagnosis,
-                primaryLanguage: child.primaryLanguage,
-                center: child.center,
-                classrooms: child.classrooms,
-            },
+            child: childApiPayload(child),
         });
     } catch (error) {
         console.error("Error updating child:", error);

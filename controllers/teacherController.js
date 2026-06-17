@@ -4,6 +4,20 @@ import { getResolvedChildIdStringsForParent } from "../lib/parentChildHelpers.js
 import AccessGrant from "../models/AccessGrant.js";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
+import { readSchoolFromBody, withSchoolField, mapSchoolCollection } from "../lib/schoolFieldAlias.js";
+
+function teacherApiPayload(teacher) {
+    return withSchoolField({
+        id: teacher._id,
+        name: teacher.name,
+        email: teacher.email,
+        username: teacher.username,
+        role: teacher.role,
+        center: teacher.center,
+        education: teacher.education,
+        dateOfBirth: teacher.dateOfBirth,
+    });
+}
 
 /**
  * Generate a random default password
@@ -25,10 +39,10 @@ const validateUsername = (u) => /^[a-z0-9_]{3,30}$/.test((u || '').toLowerCase()
 
 export const createTeacher = async (req, res) => {
     try {
-        const { name, email, password, center, education, dateOfBirth, username } = req.body;
+        const { name, email, password, education, dateOfBirth, username } = req.body;
+        const school = readSchoolFromBody(req.body);
 
-        // Validate required fields (password is now optional)
-        if (!name || !email || !center || !education || !dateOfBirth) {
+        if (!name || !email || !school || !education || !dateOfBirth) {
             return res.status(400).json({ message: "All fields except password are required" });
         }
 
@@ -72,7 +86,7 @@ export const createTeacher = async (req, res) => {
             username: cleanUsername,
             role: "teacher",
             password: hashedPassword,
-            center,
+            center: school,
             education,
             dateOfBirth,
         });
@@ -81,15 +95,7 @@ export const createTeacher = async (req, res) => {
 
         res.status(201).json({
             message: "Teacher created successfully",
-            teacher: {
-                id: teacher._id,
-                name: teacher.name,
-                email: teacher.email,
-                role: teacher.role,
-                center: teacher.center,
-                education: teacher.education,
-                dateOfBirth: teacher.dateOfBirth,
-            },
+            teacher: teacherApiPayload(teacher),
             // Include default password in response if one was generated
             ...(password ? {} : { defaultPassword: teacherPassword }),
         });
@@ -123,10 +129,10 @@ export const getAllTeachers = async (req, res) => {
                 return res.status(200).json({ teachers: [] });
             }
             const teachers = await Teacher.find({ _id: { $in: ids } });
-            return res.status(200).json({ teachers });
+            return res.status(200).json({ teachers: mapSchoolCollection(teachers) });
         }
         const teachers = await Teacher.find();
-        res.status(200).json({ teachers });
+        res.status(200).json({ teachers: mapSchoolCollection(teachers) });
     } catch (error) {
         console.error("Error fetching teachers:", error);
         res.status(500).json({ message: error.message });
@@ -167,7 +173,7 @@ export const getTeacherById = async (req, res) => {
             }
         }
 
-        res.status(200).json({ teacher });
+        res.status(200).json({ teacher: withSchoolField(teacher) });
     } catch (error) {
         console.error("Error fetching teacher:", error);
         res.status(500).json({ message: error.message });
@@ -176,11 +182,11 @@ export const getTeacherById = async (req, res) => {
 
 export const updateTeacher = async (req, res) => {
     try {
-        const { name, email, center, education, dateOfBirth, username } = req.body;
+        const { name, email, education, dateOfBirth, username } = req.body;
         const { id } = req.params;
+        const school = readSchoolFromBody(req.body);
 
-        // Validate required fields
-        if (!name || !email || !center || !education || !dateOfBirth) {
+        if (!name || !email || !school || !education || !dateOfBirth) {
             return res.status(400).json({ message: "All fields are required" });
         }
 
@@ -226,7 +232,7 @@ export const updateTeacher = async (req, res) => {
         // Update teacher
         teacher.name = name;
         teacher.email = email;
-        teacher.center = center;
+        teacher.center = school;
         teacher.education = education;
         teacher.dateOfBirth = dateOfBirth;
 
@@ -234,16 +240,7 @@ export const updateTeacher = async (req, res) => {
 
         res.status(200).json({
             message: "Teacher updated successfully",
-            teacher: {
-                id: teacher._id,
-                name: teacher.name,
-                email: teacher.email,
-                username: teacher.username,
-                role: teacher.role,
-                center: teacher.center,
-                education: teacher.education,
-                dateOfBirth: teacher.dateOfBirth,
-            },
+            teacher: teacherApiPayload(teacher),
         });
     } catch (error) {
         console.error("Error updating teacher:", error);
