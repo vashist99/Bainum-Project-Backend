@@ -14,7 +14,7 @@ import authRoutes from "../routes/authRoutes.js";
 import childRoutes from "../routes/childRoutes.js";
 import teacherRoutes from "../routes/teacherRoutes.js";
 import centerRoutes from "../routes/centerRoutes.js";
-import schoolApiMount from "../middleware/schoolApiMount.js";
+import { schoolApiMount } from "../middleware/schoolApiMount.js";
 import noteRoutes from "../routes/noteRoutes.js";
 import whisperRoutes from "../routes/whisperRoutes.js";
 import invitationRoutes from "../routes/invitationRoutes.js";
