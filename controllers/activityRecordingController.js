@@ -1,6 +1,5 @@
 import dotenv from "dotenv";
 import fs from "fs";
-import mongoose from "mongoose";
 import revai from "../lib/revai.js";
 import ragClassifier from "../lib/ragClassifier.js";
 import {
@@ -9,7 +8,6 @@ import {
     computeCategoryWordCountFromSegments,
     deriveCategoryWordCountFromKeywordCounts,
 } from "../lib/transcriptProcessor.js";
-import { Teacher, Parent, Child } from "../models/User.js";
 import {
     isPredefinedActivity,
     validateCustomActivity,
@@ -19,58 +17,9 @@ import {
     validateCustomLocation,
     resolveValidatedLocation,
 } from "../lib/locationValidator.js";
-import { getResolvedChildIdStringsForParent } from "../lib/parentChildHelpers.js";
-import { getSupervisedChildrenForTeacher } from "../lib/teacherChildHelpers.js";
+import { resolveActivityRecordingTargets } from "../lib/activityRecordingTargets.js";
 
 dotenv.config();
-
-/**
- * Resolve the list of child documents that a "Record Activity" upload should be
- * distributed to.
- *  - parent: every child linked to the parent account.
- *  - teacher: every child enrolled in any classroom this teacher leads or
- *    assists, plus any active AccessGrants.
- */
-async function resolveTargetChildren(user) {
-    if (user.role === "parent") {
-        const parent = await Parent.findById(user.id);
-        if (!parent) return { error: { status: 404, message: "Parent not found" } };
-        const idStrs = await getResolvedChildIdStringsForParent(parent);
-        if (idStrs.length === 0) {
-            return {
-                error: {
-                    status: 400,
-                    message:
-                        "You don't have any children linked to your account yet. Accept an invitation before recording.",
-                },
-            };
-        }
-        const oids = idStrs.map((s) => new mongoose.Types.ObjectId(s));
-        const children = await Child.find({ _id: { $in: oids } });
-        return { children, context: "home" };
-    }
-    if (user.role === "teacher") {
-        const teacher = await Teacher.findById(user.id);
-        if (!teacher) return { error: { status: 404, message: "Teacher not found" } };
-        const children = await getSupervisedChildrenForTeacher(teacher);
-        if (children.length === 0) {
-            return {
-                error: {
-                    status: 400,
-                    message:
-                        "No children are enrolled in any classroom you lead or assist. Send a classroom invitation to a parent (or have an admin enroll a child) before recording.",
-                },
-            };
-        }
-        return { children, context: "school" };
-    }
-    return {
-        error: {
-            status: 403,
-            message: "Only teachers and parents can record activities for their children.",
-        },
-    };
-}
 
 /**
  * POST /api/whisper/activity
@@ -84,7 +33,7 @@ export const activityRecordingController = async (req, res) => {
         const user = req.user;
         if (!user) return res.status(401).json({ message: "Authentication required" });
 
-        const { activity, recordingDate, location } = req.body || {};
+        const { activity, recordingDate, location, childId } = req.body || {};
         const rawActivity = String(activity || "").trim();
         if (!rawActivity) {
             return res.status(400).json({ message: "Please choose or enter an activity before recording." });
@@ -101,7 +50,7 @@ export const activityRecordingController = async (req, res) => {
             return res.status(500).json({ message: "Uploaded file not found on server" });
         }
 
-        const { children, context, error } = await resolveTargetChildren(user);
+        const { children, context, error } = await resolveActivityRecordingTargets(user, childId);
         if (error) {
             return res.status(error.status).json({ message: error.message });
         }

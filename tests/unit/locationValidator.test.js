@@ -11,18 +11,14 @@ import {
 describe("locationValidator – catalogs", () => {
     test("home catalog matches the spec list exactly", () => {
         assert.deepEqual(PREDEFINED_LOCATION_GROUPS.home, [
-            "Home",
-            "Park",
-            "Friend / relative's home",
-            "Museum",
-            "Athletic event / stadium",
-            "Restaurant",
-            "Library",
-            "Grocery / big box store",
-            "Medical or therapy office",
-            "Travel (e.g., car, bus)",
-            "Faith-based organization",
-            "Community Center (e.g., pool)",
+            "Mealtime or snacks",
+            "Personal Care (e.g., dressing, bathing, brushing teeth)",
+            "Play/free play (e.g., blocks, puzzles, cars & trucks)",
+            "Screen time (e.g., show, iPad / tablet / video games)",
+            "Reading or looking at books",
+            "Outdoor play (e.g., playing soccer, swinging)",
+            "Clean up (e.g., picking up toys)",
+            "Structured Activities (non-free play activities such as circle time, art, small group)",
         ]);
     });
 
@@ -41,23 +37,23 @@ describe("locationValidator – isPredefinedLocation", () => {
     test("matches tolerate case, whitespace, and punctuation drift", () => {
         assert.ok(isPredefinedLocation("  classroom ", "school"));
         assert.ok(isPredefinedLocation("PLAYGROUND", "school"));
-        assert.ok(isPredefinedLocation("friend/relative's home", "home"));
-        assert.ok(isPredefinedLocation("Travel (e.g. car, bus)", "home"));
+        assert.ok(isPredefinedLocation("mealtime or snacks", "home"));
+        assert.ok(isPredefinedLocation("Play/free play (e.g., blocks, puzzles, cars & trucks)", "home"));
     });
 
     test("context isolation: parent-only locations are not school-predefined", () => {
-        assert.ok(isPredefinedLocation("Home", "home"));
-        assert.ok(!isPredefinedLocation("Home", "school"));
+        assert.ok(isPredefinedLocation("Mealtime or snacks", "home"));
+        assert.ok(!isPredefinedLocation("Mealtime or snacks", "school"));
         assert.ok(!isPredefinedLocation("Classroom", "home"));
     });
 
-    test("Library is predefined in both contexts", () => {
-        assert.ok(isPredefinedLocation("Library", "home"));
+    test("Library is predefined in school context only", () => {
+        assert.ok(!isPredefinedLocation("Library", "home"));
         assert.ok(isPredefinedLocation("Library", "school"));
     });
 
     test("no context matches across both lists", () => {
-        assert.ok(isPredefinedLocation("Home"));
+        assert.ok(isPredefinedLocation("Mealtime or snacks"));
         assert.ok(isPredefinedLocation("Excursion"));
         assert.ok(!isPredefinedLocation("Mars Base"));
     });
@@ -122,9 +118,9 @@ describe("locationValidator – resolveValidatedLocation", () => {
             t.skip("OPENAI_API_KEY set — would call the LLM");
             return;
         }
-        // "Home" is parent-only; for school context it must go through vetting,
+        // "Mealtime or snacks" is parent-only; for school context it must go through vetting,
         // which without an LLM configured means rejection.
-        const result = await resolveValidatedLocation("Home", "school");
+        const result = await resolveValidatedLocation("Mealtime or snacks", "school");
         assert.ok(!result.ok);
     });
 });

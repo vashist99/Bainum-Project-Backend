@@ -18,13 +18,14 @@ import TeacherAssessment from '../models/TeacherAssessment.js';
 import authenticateToken from '../middleware/authMiddleware.js';
 import { recomputeAndSaveChildrenCohortStats, recomputeAndSaveTeachersCohortStats, getCohortStats } from '../lib/cohortStatsService.js';
 import {
-    hasActiveTeacherChildGrant,
     hasActiveParentTeacherGrantForAnyChild,
 } from '../lib/accessGrantHelpers.js';
+import { teacherMayAccessChild } from '../lib/noteAccessHelpers.js';
 import { Parent, Teacher, Child } from '../models/User.js';
 import { parentMayAccessChild, getResolvedChildIdStringsForParent } from '../lib/parentChildHelpers.js';
 import { isPredefinedActivity, validateCustomActivity } from '../lib/activityValidator.js';
 import { getSupervisedChildrenForTeacher } from '../lib/teacherChildHelpers.js';
+import { resolveParentAcceptTarget } from '../lib/activityRecordingTargets.js';
 import Classroom from '../models/Classroom.js';
 import { canManageClassroom } from '../lib/classroomHelpers.js';
 import { transcriptExpiryFrom } from '../lib/transcriptRetention.js';
@@ -154,7 +155,8 @@ router.post('/whisper', upload.single('audio'), handleMulterError, revaiControll
 router.post('/whisper/classroom', authenticateToken, upload.single('audio'), handleMulterError, classroomWhisperController);
 
 // "Record Activity" upload (teachers + parents). Returns transcript for review; client must
-// call /api/assessments/activity/accept to persist. Distributes to every supervised/linked child.
+// call /api/assessments/activity/accept to persist. Parents save to one selected child;
+// teachers fan out to every supervised child.
 router.post('/whisper/activity', authenticateToken, upload.single('audio'), handleMulterError, activityRecordingController);
 
 // Validate (and normalize) a custom activity label via LLM. Predefined activities bypass the LLM.
@@ -179,7 +181,7 @@ router.get('/assessments/child/:childId', authenticateToken, async (req, res) =>
                 return res.status(403).json({ message: "You can only access your own children's transcripts" });
             }
         } else if (user.role === 'teacher') {
-            const ok = await hasActiveTeacherChildGrant(user.id, childId);
+            const ok = await teacherMayAccessChild(user.id, childId);
             if (!ok) {
                 return res.status(403).json({ message: "You do not have access to this child's assessments" });
             }
@@ -192,7 +194,7 @@ router.get('/assessments/child/:childId', authenticateToken, async (req, res) =>
             Object.assign(query, transcriptVisibilityFilter());
         }
 
-        const assessments = await Assessment.find(query).sort({ date: -1 });
+        const assessments = await Assessment.find(query).sort({ _id: -1 });
         res.status(200).json({ assessments });
     } catch (error) {
         console.error("Error fetching assessments:", error);
@@ -213,7 +215,7 @@ router.get('/assessments/child/:childId/latest', authenticateToken, async (req, 
                 return res.status(403).json({ message: "You can only access your own children's transcripts" });
             }
         } else if (user.role === 'teacher') {
-            const ok = await hasActiveTeacherChildGrant(user.id, childId);
+            const ok = await teacherMayAccessChild(user.id, childId);
             if (!ok) {
                 return res.status(403).json({ message: "You do not have access to this child's assessments" });
             }
@@ -239,9 +241,8 @@ router.get('/assessments/child/:childId/latest', authenticateToken, async (req, 
     }
 });
 
-// Accept "Record Activity" assessment and save one Assessment per supervised/linked child.
-// Teachers fan out to every child enrolled in any classroom this teacher leads or assists
-// (plus any active AccessGrant); parents fan out to childIds.
+// Accept "Record Activity" assessment. Parents save one Assessment for the selected child;
+// teachers fan out to every supervised child.
 router.post('/assessments/activity/accept', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
@@ -261,6 +262,7 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             activity,
             activityContext,
             location,
+            childId,
         } = req.body || {};
 
         const finalActivity = String(activity || "").trim();
@@ -275,12 +277,11 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             expectedContext = "home";
             const parent = await Parent.findById(user.id);
             if (!parent) return res.status(404).json({ message: "Parent not found" });
-            const idStrs = await getResolvedChildIdStringsForParent(parent);
-            if (idStrs.length === 0) {
-                return res.status(400).json({ message: "No children linked to your account." });
+            const resolved = await resolveParentAcceptTarget(parent, childId);
+            if (resolved.error) {
+                return res.status(resolved.error.status).json({ message: resolved.error.message });
             }
-            const oids = idStrs.map((s) => new mongoose.Types.ObjectId(s));
-            childTargets = await Child.find({ _id: { $in: oids } });
+            childTargets = resolved.children;
         } else if (user.role === "teacher") {
             expectedContext = "school";
             teacherDoc = await Teacher.findById(user.id);

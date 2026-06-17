@@ -825,6 +825,11 @@ export const getClassroomTranscripts = async (req, res) => {
         }));
 
         const merged = [...childRows, ...teacherRows].sort((a, b) => {
+            const idA = a._id != null ? String(a._id) : "";
+            const idB = b._id != null ? String(b._id) : "";
+            if (idA && idB && idA !== idB) {
+                return idB.localeCompare(idA);
+            }
             const ta = a.date ? new Date(a.date).getTime() : 0;
             const tb = b.date ? new Date(b.date).getTime() : 0;
             return tb - ta;
