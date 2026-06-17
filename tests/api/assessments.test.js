@@ -37,8 +37,18 @@ test.describe('Assessments API Endpoints', () => {
   });
 
   test('GET /api/assessments/child/:childId - should return assessments array', async ({ request }) => {
+    // The route is wrapped in authenticateToken — anonymous requests get
+    // 401. Skip cleanly if the test admin couldn't log in (no TEST_ADMIN_*
+    // env vars, cold-start timeout, etc.), matching the convention used
+    // elsewhere in this suite.
+    if (!authToken) {
+      test.skip();
+      return;
+    }
     const id = childId || '507f1f77bcf86cd799439011';
-    const response = await request.get(`${API_BASE}/assessments/child/${id}`);
+    const response = await request.get(`${API_BASE}/assessments/child/${id}`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
 
     expect(response.status()).toBe(200);
     const body = await response.json();
