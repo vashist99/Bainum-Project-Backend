@@ -27,17 +27,12 @@ import { isPredefinedActivity, validateCustomActivity } from '../lib/activityVal
 import { getSupervisedChildrenForTeacher } from '../lib/teacherChildHelpers.js';
 import Classroom from '../models/Classroom.js';
 import { canManageClassroom } from '../lib/classroomHelpers.js';
+import { transcriptExpiryFrom } from '../lib/transcriptRetention.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const router = express.Router();
-
-function addOneMonth(dateLike) {
-    const d = new Date(dateLike);
-    d.setMonth(d.getMonth() + 1);
-    return d;
-}
 
 function toObjectId(id) {
     return mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id;
@@ -244,7 +239,8 @@ router.get('/assessments/child/:childId/latest', authenticateToken, async (req, 
 });
 
 // Accept "Record Activity" assessment and save one Assessment per supervised/linked child.
-// Teachers fan out to children where leadTeacher === teacher.name; parents fan out to childIds.
+// Teachers fan out to every child enrolled in any classroom this teacher leads or assists
+// (plus any active AccessGrant); parents fan out to childIds.
 router.post('/assessments/activity/accept', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
@@ -288,11 +284,11 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             expectedContext = "school";
             teacherDoc = await Teacher.findById(user.id);
             if (!teacherDoc) return res.status(404).json({ message: "Teacher not found" });
-            // See teacherChildHelpers: robust leadTeacher + AccessGrant lookup
-            // (legacy exact-name match silently dropped children whose leadTeacher had cosmetic drift).
+            // Classroom-membership-driven supervised-children lookup
+            // (lead+assistant on any classroom + active AccessGrants).
             childTargets = await getSupervisedChildrenForTeacher(teacherDoc);
             if (childTargets.length === 0) {
-                return res.status(400).json({ message: "No children assigned to you as lead teacher." });
+                return res.status(400).json({ message: "No children are enrolled in any classroom you lead or assist." });
             }
         } else {
             return res.status(403).json({ message: "Only parents and teachers can record activities." });
@@ -341,7 +337,7 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             classificationMethod: classificationMethod || "keyword-only",
             uploadedBy: uploadedBy || user.name || "Unknown",
             date: assessmentDate,
-            transcriptExpiresAt: addOneMonth(assessmentDate),
+            transcriptExpiresAt: transcriptExpiryFrom(assessmentDate),
             wordCount: wordCount ?? null,
             durationSeconds: durationSeconds ?? null,
             wordsPerMinute: wordsPerMinute ?? null,
@@ -459,7 +455,7 @@ router.post('/assessments/accept', async (req, res) => {
             classificationMethod: classificationMethod || 'keyword-only',
             uploadedBy: uploadedBy || "Unknown",
             date: date ? new Date(date) : new Date(),
-            transcriptExpiresAt: addOneMonth(date ? new Date(date) : new Date()),
+            transcriptExpiresAt: transcriptExpiryFrom(date ? new Date(date) : new Date()),
             wordCount: wordCount ?? null,
             durationSeconds: durationSeconds ?? null,
             wordsPerMinute: wordsPerMinute ?? null,
@@ -695,14 +691,13 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
             ? new mongoose.Types.ObjectId(teacherId)
             : teacherId;
 
-        // Need the teacher's name to find the children they lead (Child.leadTeacher is a name string).
         const teacherDoc = await Teacher.findById(teacherIdObject);
         if (!teacherDoc) {
             return res.status(404).json({ message: "Teacher not found" });
         }
 
         const assessmentDate = date ? new Date(date) : new Date();
-        const transcriptExpiresAt = addOneMonth(assessmentDate);
+        const transcriptExpiresAt = transcriptExpiryFrom(assessmentDate);
         const safeKeywordCounts = keywordCounts || { science: 0, social: 0, literature: 0, language: 0 };
         const safeCategoryWordCount = categoryWordCount || { science: 0, social: 0, literature: 0, language: 0 };
         const safeCategoryWPM = categoryWPM ?? { science: null, social: null, literature: null, language: null };
@@ -740,12 +735,10 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
         console.log("Teacher assessment saved after user acceptance");
 
         // Fan out: every child supervised by this teacher receives an Assessment with the
-        // same transcript + metrics, including the recording's activity and location
-        // (validated above against the school catalogs). See teacherChildHelpers for the lookup heuristics
-        // (exact + case-insensitive trim + active AccessGrants) — the legacy exact-name
-        // match would silently drop children with any cosmetic drift in leadTeacher.
+        // same transcript + metrics, including the recording's activity and location.
         // Classroom-scoped accept fans out to the classroom's members only;
-        // the legacy path keeps the teacher-wide supervised-children fan-out.
+        // the legacy (non-classroom) path uses the teacher-wide supervised-children
+        // lookup (classroom membership + active AccessGrants).
         const childTargets = classroomDoc
             ? await Child.find({ _id: { $in: classroomDoc.children || [] } })
             : await getSupervisedChildrenForTeacher(teacherDoc);

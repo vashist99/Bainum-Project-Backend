@@ -3,12 +3,7 @@ import { Parent } from "../models/User.js";
 import Assessment from "../models/Assessment.js";
 import { recomputeAndSaveChildrenCohortStats } from "../lib/cohortStatsService.js";
 import { getResolvedChildIdStringsForParent } from "../lib/parentChildHelpers.js";
-
-function addOneMonth(dateLike) {
-    const d = new Date(dateLike);
-    d.setMonth(d.getMonth() + 1);
-    return d;
-}
+import { transcriptExpiryFrom } from "../lib/transcriptRetention.js";
 
 /**
  * Case-insensitive parent email lookup.
@@ -104,7 +99,7 @@ export const ingestAssessmentByParentEmail = async (req, res) => {
                 classificationMethod: classificationMethod || "keyword-only",
                 uploadedBy: uploadedBy || "External ingest",
                 date: assessmentDate,
-                transcriptExpiresAt: addOneMonth(assessmentDate),
+                transcriptExpiresAt: transcriptExpiryFrom(assessmentDate),
                 wordCount: wordCount ?? null,
                 durationSeconds: durationSeconds ?? null,
                 wordsPerMinute: wordsPerMinute ?? null,

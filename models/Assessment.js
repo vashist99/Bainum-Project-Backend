@@ -25,7 +25,9 @@ const assessmentSchema = new mongoose.Schema({
         type: String, 
         required: false 
     },
-    // Transcript text is retained for one month, while WPM metrics are kept.
+    // Transcript text is retained for one year (365 days from recording
+    // date); WPM and category metrics are kept indefinitely. Stamped at
+    // write time via transcriptExpiryFrom() in backend/lib/transcriptRetention.js.
     transcriptExpiresAt: {
         type: Date,
         required: false,

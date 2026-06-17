@@ -28,7 +28,8 @@ dotenv.config();
  * Resolve the list of child documents that a "Record Activity" upload should be
  * distributed to.
  *  - parent: every child linked to the parent account.
- *  - teacher: every child whose `leadTeacher` matches the teacher's name.
+ *  - teacher: every child enrolled in any classroom this teacher leads or
+ *    assists, plus any active AccessGrants.
  */
 async function resolveTargetChildren(user) {
     if (user.role === "parent") {
@@ -51,17 +52,13 @@ async function resolveTargetChildren(user) {
     if (user.role === "teacher") {
         const teacher = await Teacher.findById(user.id);
         if (!teacher) return { error: { status: 404, message: "Teacher not found" } };
-        // Robust lookup: exact leadTeacher match + case-insensitive trim + active AccessGrants.
-        // The legacy exact-string match silently returned 0 children whenever Child.leadTeacher
-        // drifted from Teacher.name by case or whitespace, which made the recording invisible
-        // on every child's data page.
         const children = await getSupervisedChildrenForTeacher(teacher);
         if (children.length === 0) {
             return {
                 error: {
                     status: 400,
                     message:
-                        "No children are currently assigned to you as lead teacher. Add children before recording.",
+                        "No children are enrolled in any classroom you lead or assist. Send a classroom invitation to a parent (or have an admin enroll a child) before recording.",
                 },
             };
         }

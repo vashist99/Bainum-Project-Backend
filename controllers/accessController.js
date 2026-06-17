@@ -120,7 +120,7 @@ export const listPendingForTeacher = async (req, res) => {
             status: "pending",
             initiatedBy: "parent",
         })
-            .populate("childId", "name leadTeacher")
+            .populate("childId", "name center classrooms")
             .populate("parentId", "name email")
             .sort({ createdAt: -1 })
             .lean();

@@ -1,21 +1,21 @@
 import mongoose from "mongoose";
 import { Child, Teacher, Parent } from "../models/User.js";
+import Classroom from "../models/Classroom.js";
 import { hasActiveTeacherChildGrant } from "../lib/accessGrantHelpers.js";
 import {
     getResolvedChildIdStringsForParent,
     parentMayAccessChild,
 } from "../lib/parentChildHelpers.js";
+import { getSupervisedChildrenForTeacher } from "../lib/teacherChildHelpers.js";
 
 export const createChild = async (req, res) => {
     try {
-        const { name, dateOfBirth, gender, diagnosis, primaryLanguage, leadTeacher } = req.body;
+        const { name, dateOfBirth, gender, diagnosis, primaryLanguage, center } = req.body;
 
-        // Validate required fields
-        if (!name || !dateOfBirth || !gender || !diagnosis || !primaryLanguage || !leadTeacher) {
+        if (!name || !dateOfBirth || !gender || !diagnosis || !primaryLanguage || !center) {
             return res.status(400).json({ message: "All fields are required" });
         }
 
-        // Validate child age must be 8 years or below
         const dob = new Date(dateOfBirth);
         const cutoff = new Date();
         cutoff.setFullYear(cutoff.getFullYear() - 8);
@@ -23,7 +23,6 @@ export const createChild = async (req, res) => {
             return res.status(400).json({ message: "Child must be 8 years old or younger" });
         }
 
-        // Create new child
         const child = new Child({
             name,
             role: "child",
@@ -31,7 +30,8 @@ export const createChild = async (req, res) => {
             gender,
             diagnosis,
             primaryLanguage,
-            leadTeacher,
+            center: String(center).trim(),
+            classrooms: [],
         });
 
         await child.save();
@@ -46,7 +46,8 @@ export const createChild = async (req, res) => {
                 gender: child.gender,
                 diagnosis: child.diagnosis,
                 primaryLanguage: child.primaryLanguage,
-                leadTeacher: child.leadTeacher,
+                center: child.center,
+                classrooms: child.classrooms,
             },
         });
     } catch (error) {
@@ -76,8 +77,11 @@ export const getAllChildren = async (req, res) => {
             if (!teacher) {
                 return res.status(200).json({ children: [] });
             }
-            // List all children assigned to this lead teacher (for invites). Full child page still requires AccessGrant.
-            const children = await Child.find({ leadTeacher: teacher.name });
+            // List all children supervised by this teacher (lead or assistant
+            // in any classroom, plus any active AccessGrants). Used for the
+            // teacher's invite-children picker; the full child page still
+            // gates on a per-child AccessGrant.
+            const children = await getSupervisedChildrenForTeacher(teacher);
             return res.status(200).json({ children });
         }
         if (user?.role === "parent") {
@@ -126,8 +130,18 @@ export const getChildById = async (req, res) => {
             if (hasGrant) {
                 return res.status(200).json({ child });
             }
-            const isLead = teacher && child.leadTeacher === teacher.name;
-            if (isLead) {
+            // "Supervises this child" means: this teacher is the lead or
+            // assistant on at least one classroom the child is enrolled in.
+            // Drives the "send invitation" CTA on the teacher-side child page.
+            let supervises = false;
+            if (teacher && Array.isArray(child.classrooms) && child.classrooms.length > 0) {
+                const supervised = await Classroom.exists({
+                    _id: { $in: child.classrooms },
+                    $or: [{ teacher: teacher._id }, { assistantTeacher: teacher._id }],
+                });
+                supervises = !!supervised;
+            }
+            if (supervises) {
                 return res.status(403).json({
                     code: "TEACHER_ACCESS_DENIED",
                     message:
@@ -135,7 +149,8 @@ export const getChildById = async (req, res) => {
                     child: {
                         _id: child._id,
                         name: child.name,
-                        leadTeacher: child.leadTeacher,
+                        center: child.center,
+                        classrooms: child.classrooms,
                     },
                 });
             }
@@ -151,15 +166,13 @@ export const getChildById = async (req, res) => {
 
 export const updateChild = async (req, res) => {
     try {
-        const { name, dateOfBirth, gender, diagnosis, primaryLanguage, leadTeacher } = req.body;
+        const { name, dateOfBirth, gender, diagnosis, primaryLanguage, center } = req.body;
         const { id } = req.params;
 
-        // Validate required fields
-        if (!name || !dateOfBirth || !gender || !diagnosis || !primaryLanguage || !leadTeacher) {
+        if (!name || !dateOfBirth || !gender || !diagnosis || !primaryLanguage || !center) {
             return res.status(400).json({ message: "All fields are required" });
         }
 
-        // Validate child age must be 8 years or below
         const dob = new Date(dateOfBirth);
         const cutoff = new Date();
         cutoff.setFullYear(cutoff.getFullYear() - 8);
@@ -167,19 +180,17 @@ export const updateChild = async (req, res) => {
             return res.status(400).json({ message: "Child must be 8 years old or younger" });
         }
 
-        // Check if child exists
         const child = await Child.findById(id);
         if (!child) {
             return res.status(404).json({ message: "Child not found" });
         }
 
-        // Update child
         child.name = name;
         child.dateOfBirth = dateOfBirth;
         child.gender = gender;
         child.diagnosis = diagnosis;
         child.primaryLanguage = primaryLanguage;
-        child.leadTeacher = leadTeacher;
+        child.center = String(center).trim();
 
         await child.save();
 
@@ -193,7 +204,8 @@ export const updateChild = async (req, res) => {
                 gender: child.gender,
                 diagnosis: child.diagnosis,
                 primaryLanguage: child.primaryLanguage,
-                leadTeacher: child.leadTeacher,
+                center: child.center,
+                classrooms: child.classrooms,
             },
         });
     } catch (error) {

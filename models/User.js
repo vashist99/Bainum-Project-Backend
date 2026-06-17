@@ -54,7 +54,22 @@ const childSchema = new mongoose.Schema({
     gender: { type: String, required: true },
     diagnosis: { type: String, required: true },
     primaryLanguage: { type: String, required: true },
-    leadTeacher: { type: String, required: true, ref: "Teacher" },
+    /**
+     * Center the child belongs to (string, matching Teacher.center /
+     * Classroom.center convention). Required at create time; new
+     * children must be created with an explicit center. Replaces the
+     * old `leadTeacher` free-form-name field whose center was derived
+     * by name lookup.
+     */
+    center: { type: String, required: true, trim: true },
+    /**
+     * Classrooms this child is enrolled in. Populated when a parent
+     * accepts a classroom invitation listing this child, or when an
+     * admin manually enrolls the child via
+     * PATCH /api/classrooms/:id/children. Pulled on classroom
+     * deletion. Same-center rule is enforced at enroll time.
+     */
+    classrooms: [{ type: mongoose.Schema.Types.ObjectId, ref: "Classroom" }],
     parents: [{ 
         type: mongoose.Schema.Types.ObjectId, 
         ref: "Parent" 
