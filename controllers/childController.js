@@ -8,19 +8,31 @@ import {
 } from "../lib/parentChildHelpers.js";
 import { getSupervisedChildrenForTeacher } from "../lib/teacherChildHelpers.js";
 import { readSchoolFromBody, withSchoolField, mapSchoolCollection } from "../lib/schoolFieldAlias.js";
+import {
+    enrichChildClassroomsFromRosters,
+    hydrateClassroomNamesOnChildren,
+} from "../lib/classroomMembershipSync.js";
 
 const CLASSROOM_POPULATE = { path: "classrooms", select: "name" };
 
 /** Serialize classroom refs as `{ _id, name }` for API responses. */
 function formatClassroomRefs(classrooms) {
     if (!Array.isArray(classrooms)) return [];
-    return classrooms.map((room) => {
-        if (room && typeof room === "object" && room._id) {
-            return { _id: room._id, name: room.name || String(room._id) };
-        }
-        const id = room;
-        return { _id: id, name: String(id) };
-    });
+    return classrooms
+        .map((room) => {
+            if (room == null) return null;
+            if (typeof room === "object") {
+                const id = room._id ?? room.id;
+                if (!id) return null;
+                const name =
+                    typeof room.name === "string" && room.name.trim()
+                        ? room.name.trim()
+                        : "Unknown classroom";
+                return { _id: id, name };
+            }
+            return { _id: room, name: "Unknown classroom" };
+        })
+        .filter(Boolean);
 }
 
 function childWithPopulatedClassrooms(child) {
@@ -92,10 +104,16 @@ export const getAllChildren = async (req, res) => {
                 const children = await Child.find({
                     parents: { $in: acceptedParentIds },
                 }).populate(CLASSROOM_POPULATE);
-                return res.status(200).json({ children: mapSchoolCollection(children).map(childWithPopulatedClassrooms) });
+                await hydrateClassroomNamesOnChildren(children);
+                return res.status(200).json({
+                    children: mapSchoolCollection(children).map(childWithPopulatedClassrooms),
+                });
             }
             const children = await Child.find().populate(CLASSROOM_POPULATE);
-            return res.status(200).json({ children: mapSchoolCollection(children).map(childWithPopulatedClassrooms) });
+            await hydrateClassroomNamesOnChildren(children);
+            return res.status(200).json({
+                children: mapSchoolCollection(children).map(childWithPopulatedClassrooms),
+            });
         }
         if (user?.role === "teacher") {
             const teacher = await Teacher.findById(user.id);
@@ -107,7 +125,10 @@ export const getAllChildren = async (req, res) => {
             // teacher's invite-children picker; the full child page still
             // gates on a per-child AccessGrant.
             const children = await getSupervisedChildrenForTeacher(teacher);
-            return res.status(200).json({ children: mapSchoolCollection(children).map(childWithPopulatedClassrooms) });
+            await hydrateClassroomNamesOnChildren(children);
+            return res.status(200).json({
+                children: mapSchoolCollection(children).map(childWithPopulatedClassrooms),
+            });
         }
         if (user?.role === "parent") {
             const parent = await Parent.findById(user.id);
@@ -120,10 +141,16 @@ export const getAllChildren = async (req, res) => {
             }
             const oids = idStrs.map((s) => new mongoose.Types.ObjectId(s));
             const children = await Child.find({ _id: { $in: oids } }).populate(CLASSROOM_POPULATE);
-            return res.status(200).json({ children: mapSchoolCollection(children).map(childWithPopulatedClassrooms) });
+            await hydrateClassroomNamesOnChildren(children);
+            return res.status(200).json({
+                children: mapSchoolCollection(children).map(childWithPopulatedClassrooms),
+            });
         }
         const children = await Child.find().populate(CLASSROOM_POPULATE);
-        res.status(200).json({ children: mapSchoolCollection(children).map(childWithPopulatedClassrooms) });
+        await hydrateClassroomNamesOnChildren(children);
+        res.status(200).json({
+            children: mapSchoolCollection(children).map(childWithPopulatedClassrooms),
+        });
     } catch (error) {
         console.error("Error fetching children:", error);
         res.status(500).json({ message: error.message });
@@ -139,6 +166,8 @@ export const getChildById = async (req, res) => {
         if (!child) {
             return res.status(404).json({ message: "Child not found" });
         }
+
+        await enrichChildClassroomsFromRosters(child);
 
         if (req.user && req.user.role === "parent") {
             const parent = await Parent.findById(req.user.id);
