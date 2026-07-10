@@ -25,6 +25,7 @@ import { Parent, Teacher, Child } from '../models/User.js';
 import { parentMayAccessChild, getResolvedChildIdStringsForParent } from '../lib/parentChildHelpers.js';
 import { isPredefinedActivity, validateCustomActivity } from '../lib/activityValidator.js';
 import { getSupervisedChildrenForTeacher } from '../lib/teacherChildHelpers.js';
+import { staffHomeContextFilter, isStaffRole, isHomeAssessment } from '../lib/talkDataAccess.js';
 import { resolveParentAcceptTarget } from '../lib/activityRecordingTargets.js';
 import Classroom from '../models/Classroom.js';
 import { canManageClassroom } from '../lib/classroomHelpers.js';
@@ -193,6 +194,9 @@ router.get('/assessments/child/:childId', authenticateToken, async (req, res) =>
         if (user.role === 'parent' || user.role === 'teacher') {
             Object.assign(query, transcriptVisibilityFilter());
         }
+        if (isStaffRole(user.role)) {
+            Object.assign(query, staffHomeContextFilter());
+        }
 
         const assessments = await Assessment.find(query).sort({ _id: -1 });
         res.status(200).json({ assessments });
@@ -226,6 +230,9 @@ router.get('/assessments/child/:childId/latest', authenticateToken, async (req, 
         const query = { childId: toObjectId(childId) };
         if (user.role === 'parent' || user.role === 'teacher') {
             Object.assign(query, transcriptVisibilityFilter());
+        }
+        if (isStaffRole(user.role)) {
+            Object.assign(query, staffHomeContextFilter());
         }
 
         const assessment = await Assessment.findOne(query).sort({ date: -1 });
@@ -497,13 +504,18 @@ router.delete('/assessments/child/:assessmentId', authenticateToken, async (req,
             return res.status(404).json({ message: "Assessment not found" });
         }
 
-        // Admin can delete any; parent can only delete assessments for their linked children
+        // Admin can delete any classroom assessment; parent can only delete assessments
+        // for their linked children. Home recordings are parent-managed only.
         if (user.role === 'parent') {
             const parent = await Parent.findById(user.id);
             if (!parent || !(await parentMayAccessChild(parent, assessment.childId))) {
                 return res.status(403).json({ message: "You do not have permission to delete this assessment" });
             }
-        } else if (user.role !== 'admin') {
+        } else if (user.role === 'admin') {
+            if (isHomeAssessment(assessment)) {
+                return res.status(403).json({ message: "Home recordings can only be managed by the child's parent" });
+            }
+        } else {
             return res.status(403).json({ message: "You do not have permission to delete this assessment" });
         }
 

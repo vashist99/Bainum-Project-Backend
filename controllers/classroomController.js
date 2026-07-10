@@ -20,6 +20,7 @@ import {
 } from "../lib/notificationService.js";
 import { readSchoolFromBody, withSchoolField } from "../lib/schoolFieldAlias.js";
 import { materializeAndSyncClassroomChildren } from "../lib/classroomMembershipSync.js";
+import { staffHomeContextFilter } from "../lib/talkDataAccess.js";
 
 /**
  * Build the summary projection used by every classroom response. The
@@ -877,9 +878,14 @@ export const getClassroomAssessments = async (req, res) => {
             );
         }
 
+        // Classroom context only: parent home recordings (activityContext
+        // 'home') must not feed classroom charts or cohort thresholds.
         const assessments = childIds.length === 0
             ? []
-            : await Assessment.find({ childId: { $in: childIds } })
+            : await Assessment.find({
+                childId: { $in: childIds },
+                ...staffHomeContextFilter(),
+            })
                 .select("childId date categoryWPM wordsPerMinute classroomId")
                 .sort({ date: 1 })
                 .lean();
