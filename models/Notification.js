@@ -27,6 +27,7 @@ const notificationSchema = new mongoose.Schema(
                 "child-note-added",
                 "classroom-note-added",
                 "classroom-recording-added",
+                "home-access-requested",
             ],
             required: true,
         },

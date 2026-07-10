@@ -25,7 +25,7 @@ import { Parent, Teacher, Child } from '../models/User.js';
 import { parentMayAccessChild, getResolvedChildIdStringsForParent } from '../lib/parentChildHelpers.js';
 import { isPredefinedActivity, validateCustomActivity } from '../lib/activityValidator.js';
 import { getSupervisedChildrenForTeacher } from '../lib/teacherChildHelpers.js';
-import { staffHomeContextFilter, isStaffRole, isHomeAssessment } from '../lib/talkDataAccess.js';
+import { isHomeAssessment, homeContextFilterForRequest } from '../lib/talkDataAccess.js';
 import { resolveParentAcceptTarget } from '../lib/activityRecordingTargets.js';
 import Classroom from '../models/Classroom.js';
 import { canManageClassroom } from '../lib/classroomHelpers.js';
@@ -194,9 +194,8 @@ router.get('/assessments/child/:childId', authenticateToken, async (req, res) =>
         if (user.role === 'parent' || user.role === 'teacher') {
             Object.assign(query, transcriptVisibilityFilter());
         }
-        if (isStaffRole(user.role)) {
-            Object.assign(query, staffHomeContextFilter());
-        }
+        // Staff see home rows only when the child's parent granted home view access.
+        Object.assign(query, await homeContextFilterForRequest(user, childId));
 
         const assessments = await Assessment.find(query).sort({ _id: -1 });
         res.status(200).json({ assessments });
@@ -231,9 +230,8 @@ router.get('/assessments/child/:childId/latest', authenticateToken, async (req, 
         if (user.role === 'parent' || user.role === 'teacher') {
             Object.assign(query, transcriptVisibilityFilter());
         }
-        if (isStaffRole(user.role)) {
-            Object.assign(query, staffHomeContextFilter());
-        }
+        // Staff see home rows only when the child's parent granted home view access.
+        Object.assign(query, await homeContextFilterForRequest(user, childId));
 
         const assessment = await Assessment.findOne(query).sort({ date: -1 });
         
