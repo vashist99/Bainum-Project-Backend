@@ -18,7 +18,5 @@ const cohortStatsSchema = new mongoose.Schema({
     }
 }, { timestamps: true });
 
-cohortStatsSchema.index({ type: 1 });
-
 const CohortStats = mongoose.model("CohortStats", cohortStatsSchema);
 export default CohortStats;
