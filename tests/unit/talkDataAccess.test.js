@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import {
     isStaffRole,
-    staffHomeContextFilter,
+    homeOnlyContextFilter,
     isHomeAssessment,
 } from "../../lib/talkDataAccess.js";
 
@@ -15,17 +15,15 @@ describe("talkDataAccess — home talk privacy helpers", () => {
         assert.equal(isStaffRole(undefined), false);
     });
 
-    test("staff filter excludes home rows and keeps school + legacy rows", () => {
-        const filter = staffHomeContextFilter();
-        assert.deepEqual(filter, { activityContext: { $ne: "home" } });
+    test("home-only filter selects exactly the home-context rows", () => {
+        const filter = homeOnlyContextFilter();
+        assert.deepEqual(filter, { activityContext: "home" });
 
-        // Mirror Mongo's $ne semantics: matches when the field is absent,
-        // null, or any value other than 'home'.
-        const matches = (doc) => doc.activityContext !== "home";
-        assert.equal(matches({ activityContext: "home" }), false);
-        assert.equal(matches({ activityContext: "school" }), true);
-        assert.equal(matches({}), true);
-        assert.equal(matches({ activityContext: null }), true);
+        const matches = (doc) => doc.activityContext === "home";
+        assert.equal(matches({ activityContext: "home" }), true);
+        assert.equal(matches({ activityContext: "school" }), false);
+        assert.equal(matches({}), false);
+        assert.equal(matches({ activityContext: null }), false);
     });
 
     test("isHomeAssessment flags only home-context rows", () => {

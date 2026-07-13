@@ -20,6 +20,9 @@ playwright/.cache/
 # Uploads
 uploads/
 
+# Migration backups (contain raw assessment data)
+scripts/backups/
+
 # OS files
 .DS_Store
 Thumbs.db

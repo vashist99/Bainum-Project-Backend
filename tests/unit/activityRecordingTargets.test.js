@@ -6,9 +6,10 @@ import {
     resolveActivityRecordingTargets,
     resolveParentAcceptTarget,
 } from "../../lib/activityRecordingTargets.js";
-import { Parent, Child } from "../../models/User.js";
+import { Parent, Teacher, Child } from "../../models/User.js";
 
 const PARENT_ID = new mongoose.Types.ObjectId();
+const TEACHER_ID = new mongoose.Types.ObjectId();
 const CHILD_A = new mongoose.Types.ObjectId();
 const CHILD_B = new mongoose.Types.ObjectId();
 
@@ -83,6 +84,39 @@ describe("resolveActivityRecordingTargets — parent", () => {
         assert.equal(result.context, "home");
         assert.equal(result.children.length, 1);
         assert.equal(String(result.children[0]._id), String(CHILD_A));
+    });
+});
+
+describe("resolveActivityRecordingTargets — teacher", () => {
+    test("returns no child targets (recording lives on the teacher profile only)", async () => {
+        const teacherFindByIdMock = mock.method(Teacher, "findById", async () => ({
+            _id: TEACHER_ID,
+            name: "Ms. Smith",
+        }));
+        try {
+            const result = await resolveActivityRecordingTargets({
+                role: "teacher",
+                id: String(TEACHER_ID),
+            });
+            assert.equal(result.error, undefined);
+            assert.equal(result.context, "school");
+            assert.deepEqual(result.children, []);
+        } finally {
+            teacherFindByIdMock.mock.restore();
+        }
+    });
+
+    test("404 when teacher does not exist", async () => {
+        const teacherFindByIdMock = mock.method(Teacher, "findById", async () => null);
+        try {
+            const result = await resolveActivityRecordingTargets({
+                role: "teacher",
+                id: String(TEACHER_ID),
+            });
+            assert.equal(result.error?.status, 404);
+        } finally {
+            teacherFindByIdMock.mock.restore();
+        }
     });
 });
 

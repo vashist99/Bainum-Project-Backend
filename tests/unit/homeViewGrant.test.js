@@ -5,8 +5,8 @@ import mongoose from "mongoose";
 import HomeViewGrant from "../../models/HomeViewGrant.js";
 import {
     staffHasHomeViewAccess,
-    homeContextFilterForRequest,
-    staffHomeContextFilter,
+    homeTalkFilterForRequest,
+    homeOnlyContextFilter,
 } from "../../lib/talkDataAccess.js";
 
 const CHILD_ID = new mongoose.Types.ObjectId("64b0000000000000000000c1");
@@ -109,34 +109,37 @@ describe("staffHasHomeViewAccess", () => {
     });
 });
 
-describe("homeContextFilterForRequest — grant-aware child assessment filter", () => {
+describe("homeTalkFilterForRequest — grant-aware home-only filter", () => {
     const teacher = { id: String(TEACHER_ID), role: "teacher" };
     const admin = { id: "64b000000000000000000009", role: "admin" };
     const parent = { id: "64b000000000000000000001", role: "parent" };
 
-    test("parents are never filtered", async (t) => {
+    test("parents always get the home-only filter without a grant lookup", async (t) => {
         const exists = t.mock.method(HomeViewGrant, "exists", async () => null);
-        assert.deepEqual(await homeContextFilterForRequest(parent, CHILD_ID), {});
+        assert.deepEqual(
+            await homeTalkFilterForRequest(parent, CHILD_ID),
+            homeOnlyContextFilter()
+        );
         assert.equal(exists.mock.callCount(), 0);
     });
 
-    test("ungranted staff get the home-exclusion filter", async (t) => {
+    test("ungranted staff get null (no home talk data may be served)", async (t) => {
         t.mock.method(HomeViewGrant, "exists", async () => null);
-        assert.deepEqual(
-            await homeContextFilterForRequest(teacher, CHILD_ID),
-            staffHomeContextFilter()
-        );
-        assert.deepEqual(
-            await homeContextFilterForRequest(admin, CHILD_ID),
-            staffHomeContextFilter()
-        );
+        assert.equal(await homeTalkFilterForRequest(teacher, CHILD_ID), null);
+        assert.equal(await homeTalkFilterForRequest(admin, CHILD_ID), null);
     });
 
-    test("granted staff get no filter (home rows included)", async (t) => {
+    test("granted staff get the home-only filter", async (t) => {
         t.mock.method(HomeViewGrant, "exists", async () => ({
             _id: new mongoose.Types.ObjectId(),
         }));
-        assert.deepEqual(await homeContextFilterForRequest(teacher, CHILD_ID), {});
-        assert.deepEqual(await homeContextFilterForRequest(admin, CHILD_ID), {});
+        assert.deepEqual(
+            await homeTalkFilterForRequest(teacher, CHILD_ID),
+            homeOnlyContextFilter()
+        );
+        assert.deepEqual(
+            await homeTalkFilterForRequest(admin, CHILD_ID),
+            homeOnlyContextFilter()
+        );
     });
 });

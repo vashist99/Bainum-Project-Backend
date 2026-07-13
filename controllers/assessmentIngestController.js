@@ -109,6 +109,8 @@ export const ingestAssessmentByParentEmail = async (req, res) => {
                     literature: null,
                     language: null,
                 },
+                // By-parent-email ingest rows are parent home recordings.
+                activityContext: "home",
             });
             await doc.save();
             created.push({ childId: doc.childId.toString(), assessmentId: doc._id.toString() });

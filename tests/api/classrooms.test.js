@@ -234,6 +234,19 @@ test.describe('Classrooms API Endpoints', () => {
     expect(Array.isArray(assessmentsBody.assessments)).toBe(true);
     expect(assessmentsBody.cohortStats).toBeTruthy();
 
+    // Classroom recordings are stored once on TeacherAssessment — the
+    // transcripts feed contains only teacher-source rows, one per recording.
+    const transcripts = await request.get(`${API_BASE}/classrooms/${classroom.id}/transcripts`, {
+      headers: { Authorization: `Bearer ${teacherToken}` },
+    });
+    expect(transcripts.status()).toBe(200);
+    const transcriptsBody = await transcripts.json();
+    expect(Array.isArray(transcriptsBody.recordings)).toBe(true);
+    expect(transcriptsBody).not.toHaveProperty('childAssessmentCount');
+    for (const rec of transcriptsBody.recordings) {
+      expect(rec.source).toBe('teacher');
+    }
+
     if (parentToken) {
       const parentDetail = await request.get(`${API_BASE}/classrooms/${classroom.id}`, {
         headers: { Authorization: `Bearer ${parentToken}` },

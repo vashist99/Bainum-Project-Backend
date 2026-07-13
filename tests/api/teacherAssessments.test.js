@@ -140,6 +140,9 @@ test.describe('Teacher Assessments API Endpoints', () => {
     expect(body.assessment).toHaveProperty('scienceTalk', 25);
     expect(body.assessment).toHaveProperty('teacherId');
     expect(body.assessment).toHaveProperty('transcript');
+    // No per-child fan-out: the recording is persisted once, on the teacher.
+    expect(body).not.toHaveProperty('childAssessments');
+    expect(body).not.toHaveProperty('childCount');
   });
 
   test('POST /api/whisper/classroom - should require authentication', async ({ request }) => {

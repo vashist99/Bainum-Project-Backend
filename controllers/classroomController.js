@@ -1,6 +1,5 @@
 import mongoose from "mongoose";
 import Classroom from "../models/Classroom.js";
-import Assessment from "../models/Assessment.js";
 import TeacherAssessment from "../models/TeacherAssessment.js";
 import Invitation from "../models/Invitation.js";
 import { Teacher, Parent, Child } from "../models/User.js";
@@ -20,7 +19,6 @@ import {
 } from "../lib/notificationService.js";
 import { readSchoolFromBody, withSchoolField } from "../lib/schoolFieldAlias.js";
 import { materializeAndSyncClassroomChildren } from "../lib/classroomMembershipSync.js";
-import { staffHomeContextFilter } from "../lib/talkDataAccess.js";
 
 /**
  * Build the summary projection used by every classroom response. The
@@ -485,9 +483,10 @@ export const inviteParents = async (req, res) => {
  *
  * Cascade (single sequenced operation; see design D1):
  *  - Pull this classroom's id from every member child's `classrooms[]`.
- *  - Null out `classroomId` on historical Assessment / TeacherAssessment
- *    rows (per-child progress history is preserved; the row is no
- *    longer mis-attributed).
+ *  - Null out `classroomId` on historical TeacherAssessment rows (the
+ *    recording history is preserved; the row is no longer
+ *    mis-attributed). Child Assessment rows carry no classroomId —
+ *    classroom recordings live only on TeacherAssessment.
  *  - Hard-delete any pending `Invitation` rows targeting this classroom
  *    (no audit trail kept; accepted invitations are left untouched).
  *  - Delete the Classroom document itself.
@@ -540,10 +539,6 @@ export const deleteClassroom = async (req, res) => {
                   )
                 : { modifiedCount: 0 };
 
-        const assessmentNull = await Assessment.updateMany(
-            { classroomId: classroom._id },
-            { $set: { classroomId: null } }
-        );
         const teacherAssessmentNull = await TeacherAssessment.updateMany(
             { classroomId: classroom._id },
             { $set: { classroomId: null } }
@@ -565,7 +560,7 @@ export const deleteClassroom = async (req, res) => {
             summary: {
                 childrenUnlinked: childPull.modifiedCount ?? 0,
                 parentsUnlinked: memberParentIds.length,
-                assessmentsDisassociated: assessmentNull.modifiedCount ?? 0,
+                assessmentsDisassociated: 0,
                 teacherAssessmentsDisassociated:
                     teacherAssessmentNull.modifiedCount ?? 0,
                 invitationsDeleted: invitationsDelete.deletedCount ?? 0,
@@ -704,17 +699,20 @@ export const removeChildFromClassroom = async (req, res) => {
 /**
  * GET /api/classrooms/:id/transcripts
  *
- * Returns the merged set of Assessment + TeacherAssessment rows scoped
- * to this classroom, sorted by date descending. Visibility filtering
- * for non-admin callers is the same `transcriptExpiresAt > now` gate
- * used elsewhere — expired transcripts retain WPM metrics but their
- * text body is blanked out by the purge job.
+ * Returns the TeacherAssessment rows scoped to this classroom, sorted
+ * by date descending. Classroom recordings are stored exactly once (no
+ * per-child fan-out copies), so every authorized viewer — admins, the
+ * lead/assistant teachers, and enrolled parents in read mode — sees the
+ * same classroom-level rows. Visibility filtering for non-admin callers
+ * is the same `transcriptExpiresAt > now` gate used elsewhere — expired
+ * transcripts retain WPM metrics but their text body is blanked out by
+ * the purge job.
  */
 export const getClassroomTranscripts = async (req, res) => {
     try {
         const auth = await findAuthorizedClassroom(req, res);
         if (!auth) return;
-        const { classroom, mode } = auth;
+        const { classroom } = auth;
 
         const isAdmin = req.user?.role === "admin";
         const now = new Date();
@@ -737,111 +735,52 @@ export const getClassroomTranscripts = async (req, res) => {
                   ],
               };
 
-        // Parent read-only callers see only assessments tied to one of
-        // their OWN children, and never teacher-side recordings.
-        let childAssessmentFilter = { classroomId: classroom._id };
-        let teacherAssessmentFilter = { classroomId: classroom._id };
-        let includeTeacherRows = true;
-        if (mode === "read") {
-            const uid = String(req.user.id);
-            const myChildIdSet = new Set();
-            for (const p of classroom.parents || []) {
-                if (String(p._id ?? p) === uid) {
-                    for (const cid of p.childIds || []) {
-                        myChildIdSet.add(String(cid));
-                    }
+        const teacherAssessments = await TeacherAssessment.find({
+            classroomId: classroom._id,
+            ...visibilityFilter,
+        })
+            .populate("teacherId", "name")
+            .lean();
+
+        const recordings = teacherAssessments
+            .map((a) => ({
+                _id: a._id,
+                source: "teacher",
+                teacherId: a.teacherId?._id ?? a.teacherId,
+                teacherName: a.teacherId?.name ?? null,
+                date: a.date,
+                audioFileName: a.audioFileName,
+                transcript: a.transcript,
+                transcriptExpiresAt: a.transcriptExpiresAt,
+                activity: a.activity,
+                activityContext: a.activityContext,
+                location: a.location,
+                uploadedBy: a.uploadedBy,
+                wordCount: a.wordCount,
+                durationSeconds: a.durationSeconds,
+                wordsPerMinute: a.wordsPerMinute,
+                categoryWPM: a.categoryWPM,
+                categoryWordCount: a.categoryWordCount,
+                keywordCounts: a.keywordCounts,
+                ragSegments: a.ragSegments,
+                classificationMethod: a.classificationMethod,
+            }))
+            .sort((a, b) => {
+                const idA = a._id != null ? String(a._id) : "";
+                const idB = b._id != null ? String(b._id) : "";
+                if (idA && idB && idA !== idB) {
+                    return idB.localeCompare(idA);
                 }
-            }
-            const myChildOids = [...myChildIdSet].map(
-                (id) => new mongoose.Types.ObjectId(id)
-            );
-            childAssessmentFilter = {
-                classroomId: classroom._id,
-                childId: { $in: myChildOids },
-            };
-            includeTeacherRows = false;
-        }
-
-        const [childAssessments, teacherAssessments] = await Promise.all([
-            Assessment.find({ ...childAssessmentFilter, ...visibilityFilter })
-                .populate("childId", "name")
-                .lean(),
-            includeTeacherRows
-                ? TeacherAssessment.find({
-                      ...teacherAssessmentFilter,
-                      ...visibilityFilter,
-                  })
-                      .populate("teacherId", "name")
-                      .lean()
-                : Promise.resolve([]),
-        ]);
-
-        const childRows = childAssessments.map((a) => ({
-            _id: a._id,
-            source: "child",
-            childId: a.childId?._id ?? a.childId,
-            childName: a.childId?.name ?? null,
-            teacherId: null,
-            teacherName: null,
-            date: a.date,
-            audioFileName: a.audioFileName,
-            transcript: a.transcript,
-            transcriptExpiresAt: a.transcriptExpiresAt,
-            activity: a.activity,
-            activityContext: a.activityContext,
-            location: a.location,
-            uploadedBy: a.uploadedBy,
-            wordCount: a.wordCount,
-            durationSeconds: a.durationSeconds,
-            wordsPerMinute: a.wordsPerMinute,
-            categoryWPM: a.categoryWPM,
-            categoryWordCount: a.categoryWordCount,
-            keywordCounts: a.keywordCounts,
-            ragSegments: a.ragSegments,
-            classificationMethod: a.classificationMethod,
-        }));
-        const teacherRows = teacherAssessments.map((a) => ({
-            _id: a._id,
-            source: "teacher",
-            childId: null,
-            childName: null,
-            teacherId: a.teacherId?._id ?? a.teacherId,
-            teacherName: a.teacherId?.name ?? null,
-            date: a.date,
-            audioFileName: a.audioFileName,
-            transcript: a.transcript,
-            transcriptExpiresAt: a.transcriptExpiresAt,
-            activity: a.activity,
-            activityContext: a.activityContext,
-            location: a.location,
-            uploadedBy: a.uploadedBy,
-            wordCount: a.wordCount,
-            durationSeconds: a.durationSeconds,
-            wordsPerMinute: a.wordsPerMinute,
-            categoryWPM: a.categoryWPM,
-            categoryWordCount: a.categoryWordCount,
-            keywordCounts: a.keywordCounts,
-            ragSegments: a.ragSegments,
-            classificationMethod: a.classificationMethod,
-        }));
-
-        const merged = [...childRows, ...teacherRows].sort((a, b) => {
-            const idA = a._id != null ? String(a._id) : "";
-            const idB = b._id != null ? String(b._id) : "";
-            if (idA && idB && idA !== idB) {
-                return idB.localeCompare(idA);
-            }
-            const ta = a.date ? new Date(a.date).getTime() : 0;
-            const tb = b.date ? new Date(b.date).getTime() : 0;
-            return tb - ta;
-        });
+                const ta = a.date ? new Date(a.date).getTime() : 0;
+                const tb = b.date ? new Date(b.date).getTime() : 0;
+                return tb - ta;
+            });
 
         return res.status(200).json({
             classroomId: classroom._id,
             classroomName: classroom.name,
-            recordings: merged,
-            childAssessmentCount: childRows.length,
-            teacherAssessmentCount: teacherRows.length,
+            recordings,
+            teacherAssessmentCount: recordings.length,
         });
     } catch (error) {
         console.error("Error fetching classroom transcripts:", error);
@@ -853,51 +792,28 @@ export const getClassroomAssessments = async (req, res) => {
     try {
         const auth = await findAuthorizedClassroom(req, res);
         if (!auth) return;
-        const { classroom, mode } = auth;
+        const { classroom } = auth;
 
-        const { childIds: rosterChildIds } =
-            await materializeAndSyncClassroomChildren(classroom);
-        let childIds = rosterChildIds;
+        // Classroom recordings live once on TeacherAssessment (no per-child
+        // fan-out copies), so charts are computed from the classroom's own
+        // rows. Every authorized viewer — including enrolled parents in
+        // read mode — sees the same classroom-level aggregates.
+        const assessments = await TeacherAssessment.find({
+            classroomId: classroom._id,
+        })
+            .select("teacherId date categoryWPM wordsPerMinute classroomId")
+            .sort({ date: 1 })
+            .lean();
 
-        // Parent read-only: restrict assessments to the parent's own
-        // children so the per-child charts they're entitled to view are
-        // computed against the full classroom cohort baseline of just
-        // those children's rows (no other children's WPM bleed across).
-        if (mode === "read") {
-            const uid = String(req.user.id);
-            const myChildIdSet = new Set();
-            for (const p of classroom.parents || []) {
-                if (String(p._id ?? p) === uid) {
-                    for (const cid of p.childIds || []) {
-                        myChildIdSet.add(String(cid));
-                    }
-                }
-            }
-            childIds = childIds.filter((cid) =>
-                myChildIdSet.has(String(cid))
-            );
-        }
-
-        // Classroom context only: parent home recordings (activityContext
-        // 'home') must not feed classroom charts or cohort thresholds.
-        const assessments = childIds.length === 0
-            ? []
-            : await Assessment.find({
-                childId: { $in: childIds },
-                ...staffHomeContextFilter(),
-            })
-                .select("childId date categoryWPM wordsPerMinute classroomId")
-                .sort({ date: 1 })
-                .lean();
-
-        // Classroom-scoped thresholds: same "average of per-child min/max"
-        // semantics as the global children cohort, restricted to members.
-        const cohortStats = computeCohortStatsFromAssessments(assessments, "childId");
+        // Classroom-scoped dial thresholds: with the classroom as the single
+        // entity, avgMin/avgMax collapse to the min/max per-category WPM
+        // across this classroom's recordings.
+        const cohortStats = computeCohortStatsFromAssessments(assessments, "classroomId");
 
         res.status(200).json({
             assessments,
             cohortStats,
-            childCount: childIds.length,
+            recordingCount: assessments.length,
         });
     } catch (error) {
         console.error("Error fetching classroom assessments:", error);

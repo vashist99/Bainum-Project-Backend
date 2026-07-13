@@ -21,11 +21,10 @@ import {
     hasActiveParentTeacherGrantForAnyChild,
 } from '../lib/accessGrantHelpers.js';
 import { teacherMayAccessChild } from '../lib/noteAccessHelpers.js';
-import { Parent, Teacher, Child } from '../models/User.js';
+import { Parent, Teacher } from '../models/User.js';
 import { parentMayAccessChild, getResolvedChildIdStringsForParent } from '../lib/parentChildHelpers.js';
 import { isPredefinedActivity, validateCustomActivity } from '../lib/activityValidator.js';
-import { getSupervisedChildrenForTeacher } from '../lib/teacherChildHelpers.js';
-import { isHomeAssessment, homeContextFilterForRequest } from '../lib/talkDataAccess.js';
+import { isHomeAssessment, homeTalkFilterForRequest } from '../lib/talkDataAccess.js';
 import { resolveParentAcceptTarget } from '../lib/activityRecordingTargets.js';
 import Classroom from '../models/Classroom.js';
 import { canManageClassroom } from '../lib/classroomHelpers.js';
@@ -190,12 +189,17 @@ router.get('/assessments/child/:childId', authenticateToken, async (req, res) =>
             return res.status(403).json({ message: "Not allowed to view child transcripts" });
         }
 
-        const query = { childId: toObjectId(childId) };
+        // Child assessment reads serve home talk only; staff need an active
+        // parent-granted HomeViewGrant to see any rows at all.
+        const homeFilter = await homeTalkFilterForRequest(user, childId);
+        if (!homeFilter) {
+            return res.status(200).json({ assessments: [] });
+        }
+
+        const query = { childId: toObjectId(childId), ...homeFilter };
         if (user.role === 'parent' || user.role === 'teacher') {
             Object.assign(query, transcriptVisibilityFilter());
         }
-        // Staff see home rows only when the child's parent granted home view access.
-        Object.assign(query, await homeContextFilterForRequest(user, childId));
 
         const assessments = await Assessment.find(query).sort({ _id: -1 });
         res.status(200).json({ assessments });
@@ -226,19 +230,24 @@ router.get('/assessments/child/:childId/latest', authenticateToken, async (req, 
             return res.status(403).json({ message: "Not allowed to view child transcripts" });
         }
 
-        const query = { childId: toObjectId(childId) };
+        // Child assessment reads serve home talk only; staff need an active
+        // parent-granted HomeViewGrant to see any rows at all.
+        const homeFilter = await homeTalkFilterForRequest(user, childId);
+        if (!homeFilter) {
+            return res.status(404).json({ message: "No assessments found for this child" });
+        }
+
+        const query = { childId: toObjectId(childId), ...homeFilter };
         if (user.role === 'parent' || user.role === 'teacher') {
             Object.assign(query, transcriptVisibilityFilter());
         }
-        // Staff see home rows only when the child's parent granted home view access.
-        Object.assign(query, await homeContextFilterForRequest(user, childId));
 
         const assessment = await Assessment.findOne(query).sort({ date: -1 });
-        
+
         if (!assessment) {
             return res.status(404).json({ message: "No assessments found for this child" });
         }
-        
+
         res.status(200).json({ assessment });
     } catch (error) {
         console.error("Error fetching latest assessment:", error);
@@ -246,8 +255,9 @@ router.get('/assessments/child/:childId/latest', authenticateToken, async (req, 
     }
 });
 
-// Accept "Record Activity" assessment. Parents save one Assessment for the selected child;
-// teachers fan out to every supervised child.
+// Accept "Record Activity" assessment. Parents save one Assessment for the selected child
+// (home context); teachers save a single TeacherAssessment on their own profile —
+// classroom talk is never copied onto child records.
 router.post('/assessments/activity/accept', authenticateToken, async (req, res) => {
     try {
         const user = req.user;
@@ -276,7 +286,7 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
         }
 
         let expectedContext;
-        let childTargets;
+        let childTargets = [];
         let teacherDoc = null;
         if (user.role === "parent") {
             expectedContext = "home";
@@ -291,12 +301,6 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             expectedContext = "school";
             teacherDoc = await Teacher.findById(user.id);
             if (!teacherDoc) return res.status(404).json({ message: "Teacher not found" });
-            // Classroom-membership-driven supervised-children lookup
-            // (lead+assistant on any classroom + active AccessGrants).
-            childTargets = await getSupervisedChildrenForTeacher(teacherDoc);
-            if (childTargets.length === 0) {
-                return res.status(400).json({ message: "No children are enrolled in any classroom you lead or assist." });
-            }
         } else {
             return res.status(403).json({ message: "Only parents and teachers can record activities." });
         }
@@ -354,6 +358,7 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             location: locationResult.location,
         };
 
+        // Parent home recordings: one Assessment per selected child.
         const saved = await Promise.all(
             childTargets.map(async (child) => {
                 const assessment = new Assessment({ ...base, childId: child._id });
@@ -362,8 +367,7 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             })
         );
 
-        // When a teacher records a classroom activity, also persist a TeacherAssessment so the
-        // recording surfaces on the teacher's own profile alongside their classroom uploads.
+        // Teacher activity recordings live on the teacher's own profile only.
         let teacherAssessmentRef = null;
         if (user.role === "teacher" && teacherDoc) {
             const teacherAssessment = new TeacherAssessment({
@@ -398,9 +402,11 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             };
         }
 
-        await recomputeAndSaveChildrenCohortStats().catch((err) =>
-            console.error("Failed to update children cohort stats after activity recording:", err)
-        );
+        if (saved.length > 0) {
+            await recomputeAndSaveChildrenCohortStats().catch((err) =>
+                console.error("Failed to update children cohort stats after activity recording:", err)
+            );
+        }
 
         if (teacherAssessmentRef) {
             await recomputeAndSaveTeachersCohortStats().catch((err) =>
@@ -409,7 +415,9 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
         }
 
         return res.status(201).json({
-            message: `Activity recording saved for ${saved.length} child${saved.length === 1 ? "" : "ren"}.`,
+            message: user.role === "teacher"
+                ? "Activity recording saved to your profile."
+                : `Activity recording saved for ${saved.length} child${saved.length === 1 ? "" : "ren"}.`,
             activity: finalActivity,
             activityContext: expectedContext,
             count: saved.length,
@@ -655,9 +663,10 @@ router.get('/assessments/teacher/:teacherId/latest', authenticateToken, async (r
 });
 
 // Route to accept and save teacher assessment after transcript review.
-// Also fans out a per-child Assessment for every child the teacher leads, so the
-// classroom recording surfaces on each supervised child's data page in addition
-// to the teacher's own profile (mirrors the Record Activity flow).
+// The recording is persisted exactly once as a TeacherAssessment (with
+// classroomId when classroom-scoped). Classroom talk lives on the classroom
+// homepage; child data pages show home talk only, so no per-child copies
+// are created.
 router.post('/assessments/teacher/accept', authenticateToken, async (req, res) => {
     try {
         const { teacherId, audioFileName, transcript, scienceTalk, socialTalk, literatureTalk, languageDevelopment, keywordCounts, categoryWordCount, ragScores, ragSegments, classificationMethod, uploadedBy, date, center, wordCount, durationSeconds, wordsPerMinute, categoryWPM, classroomId, activity, location } = req.body;
@@ -746,52 +755,7 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
         await assessment.save();
         console.log("Teacher assessment saved after user acceptance");
 
-        // Fan out: every child supervised by this teacher receives an Assessment with the
-        // same transcript + metrics, including the recording's activity and location.
-        // Classroom-scoped accept fans out to the classroom's members only;
-        // the legacy (non-classroom) path uses the teacher-wide supervised-children
-        // lookup (classroom membership + active AccessGrants).
-        const childTargets = classroomDoc
-            ? await Child.find({ _id: { $in: classroomDoc.children || [] } })
-            : await getSupervisedChildrenForTeacher(teacherDoc);
-        const childAssessments = await Promise.all(
-            childTargets.map(async (child) => {
-                const childAssessment = new Assessment({
-                    childId: child._id,
-                    classroomId: classroomDoc ? classroomDoc._id : undefined,
-                    audioFileName: audioFileName || '',
-                    transcript: transcript || '',
-                    scienceTalk: scienceTalk || 0,
-                    socialTalk: socialTalk || 0,
-                    literatureTalk: literatureTalk || 0,
-                    languageDevelopment: languageDevelopment || 0,
-                    keywordCounts: safeKeywordCounts,
-                    categoryWordCount: safeCategoryWordCount,
-                    ragScores: ragScores || null,
-                    ragSegments: ragSegments || null,
-                    classificationMethod: classificationMethod || 'keyword-only',
-                    uploadedBy: safeUploadedBy,
-                    date: assessmentDate,
-                    transcriptExpiresAt,
-                    activity: finalActivity || undefined,
-                    activityContext: 'school',
-                    location: locationResult.location || undefined,
-                    wordCount: wordCount ?? null,
-                    durationSeconds: durationSeconds ?? null,
-                    wordsPerMinute: wordsPerMinute ?? null,
-                    categoryWPM: safeCategoryWPM,
-                });
-                await childAssessment.save();
-                return { assessmentId: childAssessment._id, childId: child._id, childName: child.name };
-            })
-        );
-
         await recomputeAndSaveTeachersCohortStats().catch((err) => console.error("Failed to update teachers cohort stats:", err));
-        if (childAssessments.length > 0) {
-            await recomputeAndSaveChildrenCohortStats().catch((err) =>
-                console.error("Failed to update children cohort stats after classroom upload:", err)
-            );
-        }
 
         if (
             classroomDoc &&
@@ -813,16 +777,11 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
             }
         }
 
-        const childCount = childAssessments.length;
-        const message = childCount > 0
-            ? `Classroom recording saved for the teacher and ${childCount} child${childCount === 1 ? '' : 'ren'}.`
-            : "Teacher assessment saved successfully";
-
         res.status(201).json({
-            message,
+            message: classroomDoc
+                ? "Classroom recording saved."
+                : "Teacher assessment saved successfully",
             assessment,
-            childAssessments,
-            childCount,
         });
     } catch (error) {
         console.error("Error saving teacher assessment:", error);

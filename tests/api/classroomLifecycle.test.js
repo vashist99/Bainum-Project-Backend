@@ -267,7 +267,8 @@ test.describe('Classroom Lifecycle API Endpoints', () => {
         expect(response.status()).toBe(200);
         const body = await response.json();
         expect(Array.isArray(body.recordings)).toBe(true);
-        expect(typeof body.childAssessmentCount).toBe('number');
+        // One entry per recording, always teacher-sourced (no child fan-out copies).
+        expect(body).not.toHaveProperty('childAssessmentCount');
         expect(typeof body.teacherAssessmentCount).toBe('number');
 
         // Sort: dates DESC. Cheap sanity check using ISO comparisons.

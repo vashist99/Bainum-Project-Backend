@@ -136,6 +136,8 @@ const enactController = async (req, res) => {
             durationSeconds,
             wordsPerMinute,
             categoryWPM,
+            // ENACT submissions are parent recordings made at home.
+            activityContext: "home",
         };
 
         const savedAssessments = await Promise.all(

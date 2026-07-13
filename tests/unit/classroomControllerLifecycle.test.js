@@ -143,6 +143,8 @@ describe("deleteClassroom", () => {
         const childUpdateMock = t.mock.method(Child, "updateMany", () =>
             Promise.resolve({ modifiedCount: 2 })
         );
+        // Child Assessment rows carry no classroomId anymore — the cascade
+        // must not touch the Assessment collection at all.
         const assessmentUpdateMock = t.mock.method(Assessment, "updateMany", () =>
             Promise.resolve({ modifiedCount: 5 })
         );
@@ -170,10 +172,11 @@ describe("deleteClassroom", () => {
         assert.deepEqual(res.body.summary, {
             childrenUnlinked: 2,
             parentsUnlinked: 1,
-            assessmentsDisassociated: 5,
+            assessmentsDisassociated: 0,
             teacherAssessmentsDisassociated: 3,
             invitationsDeleted: 4,
         });
+        assert.equal(assessmentUpdateMock.mock.calls.length, 0);
 
         // Cascade order/filter assertions: every cleanup targets THIS classroom's id.
         assert.equal(

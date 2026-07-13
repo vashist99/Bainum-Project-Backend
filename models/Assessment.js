@@ -6,13 +6,6 @@ const assessmentSchema = new mongoose.Schema({
         ref: "Child",
         required: true
     },
-    // Set when this assessment came from a classroom-scoped recording.
-    classroomId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Classroom",
-        required: false,
-        index: true,
-    },
     date: { 
         type: Date, 
         default: Date.now 

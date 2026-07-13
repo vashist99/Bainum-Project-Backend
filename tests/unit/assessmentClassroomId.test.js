@@ -9,27 +9,17 @@ const DUMMY_CHILD = new mongoose.Types.ObjectId();
 const DUMMY_TEACHER = new mongoose.Types.ObjectId();
 const DUMMY_CLASSROOM = new mongoose.Types.ObjectId();
 
-describe("Assessment.classroomId", () => {
-    test("schema declares classroomId as an optional indexed Classroom ref", () => {
-        const path = Assessment.schema.paths.classroomId;
-        assert.ok(path, "classroomId path missing");
-        assert.equal(path.instance, "ObjectId");
-        assert.equal(path.options.ref, "Classroom");
-        assert.equal(path.options.required, false);
-        assert.equal(path.options.index, true);
+describe("Assessment has no classroomId", () => {
+    test("schema no longer declares a classroomId path (classroom recordings live on TeacherAssessment)", () => {
+        assert.equal(Assessment.schema.paths.classroomId, undefined);
     });
 
-    test("instantiating without classroomId leaves it undefined (non-classroom recording)", () => {
-        const doc = new Assessment({ childId: DUMMY_CHILD });
-        assert.equal(doc.classroomId, undefined);
-    });
-
-    test("instantiating with classroomId stores the ObjectId", () => {
+    test("a classroomId passed at instantiation is discarded", () => {
         const doc = new Assessment({
             childId: DUMMY_CHILD,
             classroomId: DUMMY_CLASSROOM,
         });
-        assert.equal(String(doc.classroomId), String(DUMMY_CLASSROOM));
+        assert.equal(doc.classroomId, undefined);
     });
 });
 
