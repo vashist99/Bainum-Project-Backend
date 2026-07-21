@@ -61,6 +61,25 @@ const homeViewGrantSchema = new mongoose.Schema(
             enum: ["parent", "staff"],
             required: true,
         },
+        /**
+         * Transcript tier (mirrors CoachClassroomGrant): the parent's grant
+         * alone covers visualizations only. Home transcript text is exposed
+         * to the grantee only when an ADMIN sets this flag on an active
+         * grant. Reset to false whenever a revoked grant is re-activated.
+         */
+        transcriptAccess: {
+            type: Boolean,
+            default: false,
+        },
+        /** Admin who last toggled transcriptAccess. */
+        transcriptDecidedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            default: null,
+        },
+        transcriptDecidedAt: {
+            type: Date,
+            default: null,
+        },
     },
     { timestamps: true }
 );

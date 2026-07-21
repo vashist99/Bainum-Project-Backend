@@ -63,7 +63,7 @@ describe("homeAccessController — getHomeAccessState (staff)", () => {
         const res = mockRes();
         await getHomeAccessState(teacherReq, res);
         assert.equal(res.statusCode, 200);
-        assert.deepEqual(res.body, { status: "granted" });
+        assert.deepEqual(res.body, { status: "granted", transcriptAccess: false });
     });
 
     test("granted via own active user grant", async (t) => {
@@ -72,7 +72,7 @@ describe("homeAccessController — getHomeAccessState (staff)", () => {
         );
         const res = mockRes();
         await getHomeAccessState(teacherReq, res);
-        assert.deepEqual(res.body, { status: "granted" });
+        assert.deepEqual(res.body, { status: "granted", transcriptAccess: false });
     });
 
     test("pending own request reports pending", async (t) => {
@@ -81,7 +81,7 @@ describe("homeAccessController — getHomeAccessState (staff)", () => {
         );
         const res = mockRes();
         await getHomeAccessState(teacherReq, res);
-        assert.deepEqual(res.body, { status: "pending" });
+        assert.deepEqual(res.body, { status: "pending", transcriptAccess: false });
     });
 
     test("revoked or absent grants report none", async (t) => {
@@ -93,7 +93,7 @@ describe("homeAccessController — getHomeAccessState (staff)", () => {
         );
         const res = mockRes();
         await getHomeAccessState(teacherReq, res);
-        assert.deepEqual(res.body, { status: "none" });
+        assert.deepEqual(res.body, { status: "none", transcriptAccess: false });
     });
 
     test("invalid child id is rejected", async () => {
@@ -142,6 +142,8 @@ describe("homeAccessController — grantHomeAccess", () => {
 
     test("all-staff grant upserts to active", async (t) => {
         mockVerifiedParent(t);
+        // Prior-status lookup for the transcript-tier reset (no prior grant).
+        t.mock.method(HomeViewGrant, "findOne", () => selectLeanQuery(null));
         let captured = null;
         t.mock.method(HomeViewGrant, "findOneAndUpdate", async (query, update) => {
             captured = { query, update };
@@ -164,6 +166,7 @@ describe("homeAccessController — grantHomeAccess", () => {
 
     test("per-classroom grant resolves the current lead teacher", async (t) => {
         mockVerifiedParent(t);
+        t.mock.method(HomeViewGrant, "findOne", () => selectLeanQuery(null));
         t.mock.method(Child, "findById", () =>
             selectLeanQuery({ classrooms: [new mongoose.Types.ObjectId(CLASSROOM_ID)] })
         );

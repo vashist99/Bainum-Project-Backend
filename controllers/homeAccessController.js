@@ -7,7 +7,10 @@ import {
     teacherMayAccessChild,
     findParentsLinkedToChild,
 } from "../lib/noteAccessHelpers.js";
-import { fanOutHomeAccessRequestedNotifications } from "../lib/notificationService.js";
+import {
+    fanOutHomeAccessRequestedNotifications,
+    fanOutHomeTranscriptAccessChangedNotifications,
+} from "../lib/notificationService.js";
 
 function isValidId(id) {
     return mongoose.Types.ObjectId.isValid(id);
@@ -27,6 +30,17 @@ async function granteeNameOf(granteeId, granteeRole) {
 }
 
 /**
+ * Values applied whenever a grant becomes active from a non-active state.
+ * Re-activating a revoked grant MUST NOT silently restore the admin-set
+ * transcript tier — the parent's (re-)grant covers visualizations only.
+ */
+const TRANSCRIPT_TIER_RESET = {
+    transcriptAccess: false,
+    transcriptDecidedBy: null,
+    transcriptDecidedAt: null,
+};
+
+/**
  * GET /api/home-access/child/:childId
  * Parent: full sharing state (all-staff status, per-classroom lead rows,
  * pending staff requests). Staff: their own effective status only.
@@ -44,14 +58,41 @@ export const getHomeAccessState = async (req, res) => {
                 childId,
                 $or: [{ scope: "all-staff" }, { scope: "user", granteeId: user.id }],
             }).lean();
-            const allStaffActive = grants.some(
-                (g) => g.scope === "all-staff" && g.status === "active"
-            );
+            const allStaffGrant = grants.find((g) => g.scope === "all-staff");
+            const allStaffActive = allStaffGrant?.status === "active";
             const own = grants.find((g) => g.scope === "user");
             let status = "none";
             if (allStaffActive || own?.status === "active") status = "granted";
             else if (own?.status === "pending") status = "pending";
-            return res.status(200).json({ status });
+            // Effective transcript tier: any covering ACTIVE grant with the
+            // admin-set flag.
+            const transcriptAccess =
+                (allStaffActive && !!allStaffGrant.transcriptAccess) ||
+                (own?.status === "active" && !!own.transcriptAccess);
+            const payload = { status, transcriptAccess };
+
+            // Admins manage the transcript tier: include the child's active
+            // grants so the management panel needs no extra endpoint.
+            if (user.role === "admin") {
+                const activeGrants = await HomeViewGrant.find({
+                    childId,
+                    status: "active",
+                }).lean();
+                payload.grants = await Promise.all(
+                    activeGrants.map(async (g) => ({
+                        grantId: String(g._id),
+                        scope: g.scope,
+                        granteeId: g.granteeId ? String(g.granteeId) : null,
+                        granteeRole: g.granteeRole || null,
+                        granteeName:
+                            g.scope === "all-staff"
+                                ? "All teachers and admins"
+                                : await granteeNameOf(g.granteeId, g.granteeRole),
+                        transcriptAccess: !!g.transcriptAccess,
+                    }))
+                );
+            }
+            return res.status(200).json(payload);
         }
 
         const parent = await loadVerifiedParent(user, childId);
@@ -88,6 +129,8 @@ export const getHomeAccessState = async (req, res) => {
                 leadTeacherName: room.teacher?.name || null,
                 status: grant?.status === "active" ? "active" : grant?.status === "pending" ? "pending" : "none",
                 grantId: grant ? String(grant._id) : null,
+                transcriptAccess:
+                    grant?.status === "active" && !!grant.transcriptAccess,
             };
         });
 
@@ -105,6 +148,9 @@ export const getHomeAccessState = async (req, res) => {
         return res.status(200).json({
             allStaff: {
                 status: allStaffGrant?.status === "active" ? "active" : "none",
+                transcriptAccess:
+                    allStaffGrant?.status === "active" &&
+                    !!allStaffGrant.transcriptAccess,
             },
             classrooms,
             pendingRequests,
@@ -138,9 +184,13 @@ export const grantHomeAccess = async (req, res) => {
         }
 
         if (scope === "all-staff") {
+            const filter = { childId, scope: "all-staff", granteeId: null };
+            const prior = await HomeViewGrant.findOne(filter).select("status").lean();
+            const set = { status: "active", initiatedBy: "parent" };
+            if (prior?.status !== "active") Object.assign(set, TRANSCRIPT_TIER_RESET);
             const grant = await HomeViewGrant.findOneAndUpdate(
-                { childId, scope: "all-staff", granteeId: null },
-                { $set: { status: "active", initiatedBy: "parent" } },
+                filter,
+                { $set: set },
                 { upsert: true, new: true, setDefaultsOnInsert: true }
             );
             return res.status(200).json({ message: "Home view access granted to all teachers and admins", grant });
@@ -154,6 +204,7 @@ export const grantHomeAccess = async (req, res) => {
             if (!grant) {
                 return res.status(404).json({ message: "Request not found" });
             }
+            if (grant.status !== "active") Object.assign(grant, TRANSCRIPT_TIER_RESET);
             grant.status = "active";
             await grant.save();
             return res.status(200).json({ message: "Home view access granted", grant });
@@ -176,16 +227,18 @@ export const grantHomeAccess = async (req, res) => {
             }
             // Grant binds to the lead teacher AT GRANT TIME — a later lead
             // reassignment must not silently transfer home data access.
+            const filter = { childId, scope: "user", granteeId: classroom.teacher };
+            const prior = await HomeViewGrant.findOne(filter).select("status").lean();
+            const set = {
+                status: "active",
+                granteeRole: "teacher",
+                classroomId: classroom._id,
+                initiatedBy: "parent",
+            };
+            if (prior?.status !== "active") Object.assign(set, TRANSCRIPT_TIER_RESET);
             const grant = await HomeViewGrant.findOneAndUpdate(
-                { childId, scope: "user", granteeId: classroom.teacher },
-                {
-                    $set: {
-                        status: "active",
-                        granteeRole: "teacher",
-                        classroomId: classroom._id,
-                        initiatedBy: "parent",
-                    },
-                },
+                filter,
+                { $set: set },
                 { upsert: true, new: true, setDefaultsOnInsert: true }
             );
             return res.status(200).json({ message: "Home view access granted to the classroom's lead teacher", grant });
@@ -313,6 +366,76 @@ export const requestHomeAccess = async (req, res) => {
         });
     } catch (error) {
         console.error("requestHomeAccess:", error);
+        res.status(500).json({ message: error.message || "Internal server error" });
+    }
+};
+
+/**
+ * POST /api/home-access/child/:childId/transcript-access
+ * Admin only (route-gated via requireCapability("grantHomeTranscriptAccess")).
+ * Body: { grantId, transcriptAccess: boolean }. Toggles the transcript tier
+ * on an ACTIVE grant; the parent's grant alone covers visualizations only.
+ * Linked parents (and a user-scoped grantee) are notified; notification
+ * failures never roll back the toggle.
+ */
+export const setHomeTranscriptAccess = async (req, res) => {
+    try {
+        const { childId } = req.params;
+        const { grantId, transcriptAccess } = req.body || {};
+        const user = req.user;
+        if (!isValidId(childId) || !isValidId(grantId)) {
+            return res.status(400).json({ message: "Invalid child or grant id" });
+        }
+        if (typeof transcriptAccess !== "boolean") {
+            return res.status(400).json({ message: "transcriptAccess must be a boolean" });
+        }
+
+        const grant = await HomeViewGrant.findOne({ _id: grantId, childId });
+        if (!grant) {
+            return res.status(404).json({ message: "Grant not found" });
+        }
+        if (grant.status !== "active") {
+            return res.status(400).json({
+                message: "Transcript access can only be changed on an active grant",
+            });
+        }
+
+        grant.transcriptAccess = transcriptAccess;
+        grant.transcriptDecidedBy = user.id;
+        grant.transcriptDecidedAt = new Date();
+        await grant.save();
+
+        try {
+            const { child, parents } = await findParentsLinkedToChild(childId);
+            const granteeName =
+                grant.scope === "all-staff"
+                    ? "all teachers and admins"
+                    : await granteeNameOf(grant.granteeId, grant.granteeRole);
+            await fanOutHomeTranscriptAccessChangedNotifications({
+                child,
+                parentIds: (parents || []).map((p) => p._id),
+                grantee:
+                    grant.scope === "user"
+                        ? { id: grant.granteeId, role: grant.granteeRole }
+                        : null,
+                granteeName,
+                transcriptAccess,
+            });
+        } catch (notifyErr) {
+            console.error(
+                "[homeAccessController] transcript access notification failed:",
+                notifyErr.message
+            );
+        }
+
+        return res.status(200).json({
+            message: transcriptAccess
+                ? "Home transcript access granted"
+                : "Home transcript access removed",
+            grant,
+        });
+    } catch (error) {
+        console.error("setHomeTranscriptAccess:", error);
         res.status(500).json({ message: error.message || "Internal server error" });
     }
 };

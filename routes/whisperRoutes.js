@@ -24,7 +24,13 @@ import { teacherMayAccessChild } from '../lib/noteAccessHelpers.js';
 import { Parent, Teacher } from '../models/User.js';
 import { parentMayAccessChild, getResolvedChildIdStringsForParent } from '../lib/parentChildHelpers.js';
 import { isPredefinedActivity, validateCustomActivity } from '../lib/activityValidator.js';
-import { isHomeAssessment, homeTalkFilterForRequest } from '../lib/talkDataAccess.js';
+import {
+    isHomeAssessment,
+    isStaffRole,
+    homeTalkFilterForRequest,
+    staffHasHomeTranscriptAccess,
+    stripHomeTranscriptFields,
+} from '../lib/talkDataAccess.js';
 import { resolveParentAcceptTarget } from '../lib/activityRecordingTargets.js';
 import Classroom from '../models/Classroom.js';
 import { canManageClassroom } from '../lib/classroomHelpers.js';
@@ -202,7 +208,18 @@ router.get('/assessments/child/:childId', authenticateToken, async (req, res) =>
             Object.assign(query, transcriptVisibilityFilter());
         }
 
-        const assessments = await Assessment.find(query).sort({ _id: -1 });
+        let assessments = await Assessment.find(query).sort({ _id: -1 });
+
+        // Aggregate tier: staff whose grant lacks the admin-set
+        // transcriptAccess flag get charts data only — transcript text,
+        // RAG segments, and audio references are stripped server-side.
+        if (
+            isStaffRole(user.role) &&
+            !(await staffHasHomeTranscriptAccess(user, childId))
+        ) {
+            assessments = assessments.map(stripHomeTranscriptFields);
+        }
+
         res.status(200).json({ assessments });
     } catch (error) {
         console.error("Error fetching assessments:", error);
@@ -243,10 +260,19 @@ router.get('/assessments/child/:childId/latest', authenticateToken, async (req, 
             Object.assign(query, transcriptVisibilityFilter());
         }
 
-        const assessment = await Assessment.findOne(query).sort({ date: -1 });
+        let assessment = await Assessment.findOne(query).sort({ date: -1 });
 
         if (!assessment) {
             return res.status(404).json({ message: "No assessments found for this child" });
+        }
+
+        // Aggregate tier: strip transcript fields for staff without the
+        // admin-set transcriptAccess flag (see /assessments/child/:childId).
+        if (
+            isStaffRole(user.role) &&
+            !(await staffHasHomeTranscriptAccess(user, childId))
+        ) {
+            assessment = stripHomeTranscriptFields(assessment);
         }
 
         res.status(200).json({ assessment });
