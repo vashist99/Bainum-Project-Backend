@@ -4,10 +4,9 @@ import mongoose from "mongoose";
 import revai from "../lib/revai.js";
 import ragClassifier from "../lib/ragClassifier.js";
 import { analyzeTranscript, extractKeywordSegments, computeCategoryWordCountFromSegments, deriveCategoryWordCountFromKeywordCounts } from "../lib/transcriptProcessor.js";
-import { Teacher } from "../models/User.js";
 import Classroom from "../models/Classroom.js";
 import { canManageClassroom } from "../lib/classroomHelpers.js";
-import { isSameCenter } from "../lib/centerNames.js";
+import { roleHasCapability } from "../lib/permissions.js";
 import { isPredefinedActivity, validateCustomActivity } from "../lib/activityValidator.js";
 import { resolveValidatedLocation } from "../lib/locationValidator.js";
 
@@ -17,7 +16,7 @@ const classroomWhisperController = async (req, res) => {
     let filePath = null;
 
     try {
-        const { teacherId: bodyTeacherId, center, recordingDate, classroomId, activity, location } = req.body;
+        const { recordingDate, classroomId, activity, location } = req.body;
         const user = req.user;
 
         // Classroom recordings are always school-context: validate the activity
@@ -63,30 +62,13 @@ const classroomWhisperController = async (req, res) => {
             }
         }
 
-        // Determine teacherId based on role
-        let teacherId;
-        if (user.role === "teacher") {
-            teacherId = user.id;
-        } else if (user.role === "admin") {
-            // For classroom uploads an admin may omit teacherId — the recording
-            // is attributed to the classroom's lead teacher.
-            const effectiveTeacherId = bodyTeacherId || (classroomDoc ? String(classroomDoc.teacher) : null);
-            if (!effectiveTeacherId) {
-                return res.status(400).json({ message: "Teacher ID is required for admin uploads" });
-            }
-            teacherId = effectiveTeacherId;
-
-            // Validate teacher exists and belongs to selected center (if center provided)
-            const teacher = await Teacher.findById(teacherId);
-            if (!teacher) {
-                return res.status(404).json({ message: "Teacher not found" });
-            }
-            if (center && !isSameCenter(teacher.center, center)) {
-                return res.status(400).json({ message: "Selected teacher does not belong to the chosen school" });
-            }
-        } else {
-            return res.status(403).json({ message: "Only teachers and admins can upload classroom recordings" });
+        // Only teachers create classroom recordings. Admin upload was removed
+        // (add-coach-role change); coaches never had it. Pre-existing
+        // admin-uploaded recordings remain readable.
+        if (!roleHasCapability(user.role, "uploadClassroomRecording")) {
+            return res.status(403).json({ message: "Only classroom teachers can upload classroom recordings" });
         }
+        const teacherId = user.id;
 
         if (!req.file) {
             return res.status(400).json({

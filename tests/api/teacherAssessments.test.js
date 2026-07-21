@@ -88,7 +88,10 @@ test.describe('Teacher Assessments API Endpoints', () => {
     expect(response.status()).toBe(401);
   });
 
-  test('POST /api/assessments/teacher/accept - should require teacherId', async ({ request }) => {
+  // Admin upload removal (add-coach-role): admins can no longer save
+  // classroom recordings — the capability check fires before any
+  // field validation, so both requests below get 403 as admin.
+  test('POST /api/assessments/teacher/accept - admin is rejected before field validation', async ({ request }) => {
     if (!authToken) {
       test.skip();
       return;
@@ -102,12 +105,12 @@ test.describe('Teacher Assessments API Endpoints', () => {
       }
     });
 
-    expect(response.status()).toBe(400);
+    expect(response.status()).toBe(403);
     const body = await response.json();
-    expect(body.message).toMatch(/teacher|required/i);
+    expect(body.message).toMatch(/teacher/i);
   });
 
-  test('POST /api/assessments/teacher/accept - should save assessment with valid data', async ({ request }) => {
+  test('POST /api/assessments/teacher/accept - admin cannot save classroom recordings', async ({ request }) => {
     if (!authToken || !teacherId) {
       test.skip();
       return;
@@ -133,16 +136,9 @@ test.describe('Teacher Assessments API Endpoints', () => {
       }
     });
 
-    expect(response.status()).toBe(201);
+    expect(response.status()).toBe(403);
     const body = await response.json();
-    expect(body).toHaveProperty('message', 'Teacher assessment saved successfully');
-    expect(body).toHaveProperty('assessment');
-    expect(body.assessment).toHaveProperty('scienceTalk', 25);
-    expect(body.assessment).toHaveProperty('teacherId');
-    expect(body.assessment).toHaveProperty('transcript');
-    // No per-child fan-out: the recording is persisted once, on the teacher.
-    expect(body).not.toHaveProperty('childAssessments');
-    expect(body).not.toHaveProperty('childCount');
+    expect(body.message).toMatch(/only classroom teachers/i);
   });
 
   test('POST /api/whisper/classroom - should require authentication', async ({ request }) => {

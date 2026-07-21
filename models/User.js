@@ -20,6 +20,22 @@ const teacherSchema = new mongoose.Schema({
     center: { type: String, required: true },
     education: { type: String, required: true },
     dateOfBirth: { type: Date, required: true },
+    /**
+     * The coach overseeing this teacher (at most one). Assigned/unassigned
+     * by admins from the Coaches tab. A coach's teacher list is
+     * `Teacher.find({ coachId })`.
+     */
+    coachId: { type: mongoose.Schema.Types.ObjectId, ref: "Coach", default: null, index: true },
+});
+
+const coachSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    username: { type: String, unique: true, sparse: true, lowercase: true, trim: true, match: [usernameRegex, 'Username must be 3-30 chars, lowercase letters, numbers, underscore'] },
+    email: { type: String, required: true, unique: true },
+    role: { type: String, required: true, enum: ["coach"] },
+    password: { type: String, required: true },
+}, {
+    timestamps: true
 });
 
 const parentSchema = new mongoose.Schema({
@@ -85,5 +101,6 @@ const Admin = mongoose.model("Admin", adminSchema);
 const Teacher = mongoose.model("Teacher", teacherSchema);   
 const Parent = mongoose.model("Parent", parentSchema);
 const Child = mongoose.model("Child", childSchema);
+const Coach = mongoose.model("Coach", coachSchema);
 
-export { Admin, Teacher, Parent, Child};
+export { Admin, Teacher, Parent, Child, Coach };

@@ -26,6 +26,46 @@ test.describe('Authentication Endpoints', () => {
     expect(body.message).toMatch(/invalid|incorrect|unauthorized/i);
   });
 
+  test('POST /api/auth/register - should reject coach role (invitation-only)', async ({ request }) => {
+    const response = await request.post(`${API_BASE}/auth/register`, {
+      data: {
+        name: 'Coach Carter',
+        email: `coach-${Date.now()}@example.com`,
+        password: 'password123',
+        role: 'coach',
+        username: `coach_${Date.now()}`
+      }
+    });
+
+    expect(response.status()).toBe(400);
+    const body = await response.json();
+    expect(body.message).toMatch(/invalid role/i);
+  });
+
+  test('POST /api/auth/register-coach - should require password and token', async ({ request }) => {
+    const response = await request.post(`${API_BASE}/auth/register-coach`, {
+      data: {}
+    });
+
+    expect(response.status()).toBe(400);
+    const body = await response.json();
+    expect(body.message).toMatch(/password|token|required/i);
+  });
+
+  test('POST /api/auth/register-coach - should reject invalid invitation token', async ({ request }) => {
+    const response = await request.post(`${API_BASE}/auth/register-coach`, {
+      data: {
+        password: 'password123',
+        username: `coach_${Date.now()}`,
+        invitationToken: 'not-a-real-token'
+      }
+    });
+
+    expect(response.status()).toBe(404);
+    const body = await response.json();
+    expect(body.message).toMatch(/invalid invitation/i);
+  });
+
   test('POST /api/auth/login - should return token with valid credentials', async ({ request }) => {
     const testEmail = process.env.TEST_ADMIN_EMAIL || 'admin@example.com';
     const testPassword = process.env.TEST_ADMIN_PASSWORD || 'password123';

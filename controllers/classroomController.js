@@ -205,6 +205,9 @@ export const listClassrooms = async (req, res) => {
  *   - "manage": admins and lead/assistant teachers (full payload + writes)
  *   - "read":   parents who appear in the classroom's `parents` array
  *               (read-only payloads, scoped to their own children)
+ *   - "coach":  coaches with an ACTIVE CoachClassroomGrant (aggregate-tier
+ *               read-only; `coachTranscriptAccess` carries the admin-granted
+ *               transcript tier)
  *
  * On any auth/lookup failure this writes the appropriate response body
  * and returns null — callers should `if (!auth) return;`.
@@ -235,6 +238,22 @@ async function findAuthorizedClassroom(req, res) {
         );
         if (isMember) return { classroom, mode: "read" };
     }
+    // Coach read-only: needs an ACTIVE grant for this classroom.
+    if (req.user?.role === "coach") {
+        const { default: CoachClassroomGrant } = await import("../models/CoachClassroomGrant.js");
+        const grant = await CoachClassroomGrant.findOne({
+            coachId: req.user.id,
+            classroomId: classroom._id,
+            status: "active",
+        }).lean();
+        if (grant) {
+            return {
+                classroom,
+                mode: "coach",
+                coachTranscriptAccess: !!grant.transcriptAccess,
+            };
+        }
+    }
     res.status(403).json({ message: "You do not have access to this classroom" });
     return null;
 }
@@ -247,6 +266,22 @@ export const getClassroom = async (req, res) => {
 
         const { summaries: rosterChildren } =
             await materializeAndSyncClassroomChildren(classroom);
+
+        // Coach read-only payload: classroom identity + size only. No child
+        // or parent roster — coaches consume talk data, not membership.
+        // `coachTranscriptAccess` tells the client whether to fetch/show
+        // transcript content (admin-granted tier).
+        if (mode === "coach") {
+            return res.status(200).json({
+                classroom: {
+                    ...toClassroomSummary(classroom, req.user, "coach"),
+                    childCount: rosterChildren.length,
+                    children: [],
+                    parents: [],
+                    coachTranscriptAccess: auth.coachTranscriptAccess === true,
+                },
+            });
+        }
 
         // Parent read-only payload: hide the full roster, surface only
         // the parent's own children. Counts come from the unfiltered
@@ -712,7 +747,15 @@ export const getClassroomTranscripts = async (req, res) => {
     try {
         const auth = await findAuthorizedClassroom(req, res);
         if (!auth) return;
-        const { classroom } = auth;
+        const { classroom, mode, coachTranscriptAccess } = auth;
+
+        // Coaches on the aggregate tier may not read transcript content at
+        // all — the transcript tier is a separate admin-controlled grant.
+        if (mode === "coach" && !coachTranscriptAccess) {
+            return res.status(403).json({
+                message: "Transcript access for this classroom has not been granted by an admin",
+            });
+        }
 
         const isAdmin = req.user?.role === "admin";
         const now = new Date();

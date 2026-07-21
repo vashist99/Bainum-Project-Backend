@@ -16,7 +16,7 @@ const notificationSchema = new mongoose.Schema(
         },
         recipientRole: {
             type: String,
-            enum: ["parent", "teacher", "admin"],
+            enum: ["parent", "teacher", "admin", "coach"],
             required: true,
         },
         type: {
@@ -28,6 +28,11 @@ const notificationSchema = new mongoose.Schema(
                 "classroom-note-added",
                 "classroom-recording-added",
                 "home-access-requested",
+                "coach-access-requested",
+                "coach-access-approved",
+                "coach-access-denied",
+                "coach-access-revoked",
+                "coach-transcript-access-changed",
             ],
             required: true,
         },

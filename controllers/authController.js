@@ -1,4 +1,4 @@
-import { Admin, Teacher, Parent, Child } from "../models/User.js";
+import { Admin, Teacher, Parent, Child, Coach } from "../models/User.js";
 import Invitation from "../models/Invitation.js";
 import TeacherInvitation from "../models/TeacherInvitation.js";
 import PasswordReset from "../models/PasswordReset.js";
@@ -28,7 +28,8 @@ export const register = async (req, res) => {
         }
         const cleanUsername = username.toLowerCase().trim();
 
-        // Determine which model to use based on role
+        // Determine which model to use based on role. Coaches (like parents)
+        // may only register through an invitation link, never here.
         let UserModel;
         if (role === "admin") {
             UserModel = Admin;
@@ -95,7 +96,7 @@ export const login = async (req, res) => {
         }
 
 
-        // Try to find user in Admin, Teacher, and Parent collections
+        // Try to find user in Admin, Teacher, Parent, and Coach collections
         let user = await Admin.findOne({ email });
         let userType = 'admin';
         
@@ -107,6 +108,11 @@ export const login = async (req, res) => {
         if (!user) {
             user = await Parent.findOne({ email });
             userType = 'parent';
+        }
+
+        if (!user) {
+            user = await Coach.findOne({ email });
+            userType = 'coach';
         }
         
         if (!user) {
@@ -515,6 +521,92 @@ export const registerTeacher = async (req, res) => {
 };
 
 /**
+ * Register coach with invitation token (mirrors registerTeacher).
+ */
+export const registerCoach = async (req, res) => {
+    try {
+        const { password, invitationToken, username } = req.body;
+
+        if (!password || !invitationToken) {
+            return res.status(400).json({
+                message: "Password and invitation token are required"
+            });
+        }
+
+        if (!username || !validateUsername(username)) {
+            return res.status(400).json({ message: "Username is required (3-30 chars, lowercase letters, numbers, underscore only)" });
+        }
+        const cleanUsername = username.toLowerCase().trim();
+
+        if (password.length < 6) {
+            return res.status(400).json({
+                message: "Password must be at least 6 characters"
+            });
+        }
+
+        const { default: CoachInvitation } = await import("../models/CoachInvitation.js");
+        const invitation = await CoachInvitation.findOne({ token: invitationToken });
+
+        if (!invitation) {
+            return res.status(404).json({ message: "Invalid invitation token" });
+        }
+        if (invitation.status === 'accepted') {
+            return res.status(400).json({ message: "This invitation has already been used" });
+        }
+        if (invitation.isExpired()) {
+            invitation.status = 'expired';
+            await invitation.save();
+            return res.status(400).json({ message: "This invitation has expired" });
+        }
+
+        const existingByEmail = await Coach.findOne({ email: invitation.email.toLowerCase() });
+        if (existingByEmail) {
+            return res.status(400).json({ message: "A coach account already exists for this email" });
+        }
+        const existingByUsername = await Coach.findOne({ username: cleanUsername });
+        if (existingByUsername) {
+            return res.status(400).json({ message: "Username is already taken" });
+        }
+
+        const saltRounds = 10;
+        const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+        const coach = new Coach({
+            name: `${invitation.firstName} ${invitation.lastName}`,
+            email: invitation.email.toLowerCase(),
+            username: cleanUsername,
+            password: hashedPassword,
+            role: 'coach',
+        });
+        await coach.save();
+
+        const userResponse = {
+            id: coach._id.toString(),
+            name: coach.name,
+            email: coach.email,
+            username: coach.username,
+            role: coach.role,
+        };
+
+        const token = jwt.sign(userResponse, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
+
+        invitation.status = 'accepted';
+        invitation.acceptedAt = new Date();
+        await invitation.save();
+
+        res.status(201).json({
+            message: "Coach account created successfully",
+            user: token,
+        });
+    } catch (error) {
+        console.error("Coach registration error:", error);
+        res.status(500).json({
+            message: error.message || "Internal server error"
+        });
+    }
+};
+
+/**
  * Forgot password - send reset email if account exists
  * Uses generic success message to avoid email enumeration
  */
@@ -540,6 +632,10 @@ export const forgotPassword = async (req, res) => {
         if (!user) {
             user = await Parent.findOne({ email: normalizedEmail });
             userType = "parent";
+        }
+        if (!user) {
+            user = await Coach.findOne({ email: normalizedEmail });
+            userType = "coach";
         }
 
         // Generic success - don't reveal if email exists
@@ -605,6 +701,7 @@ export const resetPassword = async (req, res) => {
         let UserModel;
         if (resetRecord.userType === "admin") UserModel = Admin;
         else if (resetRecord.userType === "teacher") UserModel = Teacher;
+        else if (resetRecord.userType === "coach") UserModel = Coach;
         else UserModel = Parent;
 
         const user = await UserModel.findOne({ email: resetRecord.email });

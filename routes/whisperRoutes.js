@@ -28,6 +28,7 @@ import { isHomeAssessment, homeTalkFilterForRequest } from '../lib/talkDataAcces
 import { resolveParentAcceptTarget } from '../lib/activityRecordingTargets.js';
 import Classroom from '../models/Classroom.js';
 import { canManageClassroom } from '../lib/classroomHelpers.js';
+import { roleHasCapability } from '../lib/permissions.js';
 import { transcriptExpiryFrom } from '../lib/transcriptRetention.js';
 import { fanOutClassroomRecordingAddedNotifications } from '../lib/notificationService.js';
 
@@ -670,6 +671,12 @@ router.get('/assessments/teacher/:teacherId/latest', authenticateToken, async (r
 router.post('/assessments/teacher/accept', authenticateToken, async (req, res) => {
     try {
         const { teacherId, audioFileName, transcript, scienceTalk, socialTalk, literatureTalk, languageDevelopment, keywordCounts, categoryWordCount, ragScores, ragSegments, classificationMethod, uploadedBy, date, center, wordCount, durationSeconds, wordsPerMinute, categoryWPM, classroomId, activity, location } = req.body;
+
+        // Only teachers persist classroom recordings (admin upload removed by
+        // the add-coach-role change; coaches are read-only by design).
+        if (!roleHasCapability(req.user?.role, "uploadClassroomRecording")) {
+            return res.status(403).json({ message: "Only classroom teachers can save classroom recordings" });
+        }
 
         if (!teacherId) {
             return res.status(400).json({ message: "Teacher ID is required" });
