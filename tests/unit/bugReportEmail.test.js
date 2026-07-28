@@ -30,7 +30,7 @@ describe("bugReportEmail — escapeHtml", () => {
 describe("bugReportEmail — buildBugReportEmailPayload", () => {
     test("subject follows the [Bug Report] format", () => {
         const { subject } = buildBugReportEmailPayload(baseReport());
-        assert.equal(subject, "[Bug Report] Charts do not load — Bainum Dashboard");
+        assert.equal(subject, "[Bug Report] Charts do not load — CATTAC Dashboard");
     });
 
     test("script tags in user input are neutralized in the HTML body", () => {
@@ -46,7 +46,7 @@ describe("bugReportEmail — buildBugReportEmailPayload", () => {
             baseReport({ pageOrFeature: "Child data page" })
         );
         for (const body of [htmlContent, textContent]) {
-            assert.match(body, /submitted by a signed-in user of the Bainum dashboard/);
+            assert.match(body, /submitted by a signed-in user of the CATTAC dashboard/);
             assert.match(body, /Pat Parent \(parent, pat@example\.com\)/);
             assert.match(body, /Child data page/);
             assert.match(body, /Mozilla\/5\.0 \(X11; Linux x86_64\)/);

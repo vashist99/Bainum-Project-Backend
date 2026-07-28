@@ -521,16 +521,25 @@ export const registerTeacher = async (req, res) => {
 };
 
 /**
- * Register coach with invitation token (mirrors registerTeacher).
+ * Open coach self-registration — no invitation required. Coaches join
+ * freely but see no classroom data until the existing grant flow runs
+ * (coach requests access, teacher/admin approves, transcripts admin-gated).
  */
 export const registerCoach = async (req, res) => {
     try {
-        const { password, invitationToken, username } = req.body;
+        const { name, email, password, username } = req.body;
 
-        if (!password || !invitationToken) {
+        const cleanName = String(name || "").trim();
+        const cleanEmail = String(email || "").toLowerCase().trim();
+        if (!cleanName || !cleanEmail || !password) {
             return res.status(400).json({
-                message: "Password and invitation token are required"
+                message: "All fields are required: name, email, username, password"
             });
+        }
+
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(cleanEmail)) {
+            return res.status(400).json({ message: "Invalid email format" });
         }
 
         if (!username || !validateUsername(username)) {
@@ -544,22 +553,7 @@ export const registerCoach = async (req, res) => {
             });
         }
 
-        const { default: CoachInvitation } = await import("../models/CoachInvitation.js");
-        const invitation = await CoachInvitation.findOne({ token: invitationToken });
-
-        if (!invitation) {
-            return res.status(404).json({ message: "Invalid invitation token" });
-        }
-        if (invitation.status === 'accepted') {
-            return res.status(400).json({ message: "This invitation has already been used" });
-        }
-        if (invitation.isExpired()) {
-            invitation.status = 'expired';
-            await invitation.save();
-            return res.status(400).json({ message: "This invitation has expired" });
-        }
-
-        const existingByEmail = await Coach.findOne({ email: invitation.email.toLowerCase() });
+        const existingByEmail = await Coach.findOne({ email: cleanEmail });
         if (existingByEmail) {
             return res.status(400).json({ message: "A coach account already exists for this email" });
         }
@@ -572,8 +566,8 @@ export const registerCoach = async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, saltRounds);
 
         const coach = new Coach({
-            name: `${invitation.firstName} ${invitation.lastName}`,
-            email: invitation.email.toLowerCase(),
+            name: cleanName,
+            email: cleanEmail,
             username: cleanUsername,
             password: hashedPassword,
             role: 'coach',
@@ -589,10 +583,6 @@ export const registerCoach = async (req, res) => {
         };
 
         const token = jwt.sign(userResponse, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
-
-        invitation.status = 'accepted';
-        invitation.acceptedAt = new Date();
-        await invitation.save();
 
         res.status(201).json({
             message: "Coach account created successfully",

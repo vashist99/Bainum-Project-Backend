@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import mongoose from "mongoose";
 
 import CoachClassroomGrant from "../../models/CoachClassroomGrant.js";
-import CoachInvitation from "../../models/CoachInvitation.js";
 import { Coach, Teacher } from "../../models/User.js";
 import {
     canViewClassroomAggregates,
@@ -70,40 +69,6 @@ describe("Coach and Teacher models — coach plumbing", () => {
         assert.ok(path, "Teacher schema should define coachId");
         assert.equal(path.options.ref, "Coach");
         assert.equal(path.options.default, null);
-    });
-});
-
-describe("CoachInvitation model", () => {
-    test("generates 64-char hex tokens", () => {
-        const token = CoachInvitation.generateToken();
-        assert.match(token, /^[0-9a-f]{64}$/);
-    });
-
-    test("expires 7 days out by default and isExpired works", () => {
-        const invitation = new CoachInvitation({
-            email: "coach@example.com",
-            firstName: "Coach",
-            lastName: "Carter",
-            token: "t",
-            sentBy: COACH_ID,
-            sentByRole: "admin",
-        });
-        assert.ok(invitation.expiresAt > new Date());
-        assert.equal(invitation.isExpired(), false);
-        invitation.expiresAt = new Date(Date.now() - 1000);
-        assert.equal(invitation.isExpired(), true);
-    });
-
-    test("only admins can be the sender", () => {
-        const invitation = new CoachInvitation({
-            email: "coach@example.com",
-            firstName: "Coach",
-            lastName: "Carter",
-            token: "t",
-            sentBy: COACH_ID,
-            sentByRole: "teacher",
-        });
-        assert.ok(invitation.validateSync()?.errors?.sentByRole);
     });
 });
 

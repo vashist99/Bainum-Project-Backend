@@ -20,7 +20,6 @@ import whisperRoutes from "../routes/whisperRoutes.js";
 import invitationRoutes from "../routes/invitationRoutes.js";
 import teacherInvitationRoutes from "../routes/teacherInvitationRoutes.js";
 import coachRoutes from "../routes/coachRoutes.js";
-import coachInvitationRoutes from "../routes/coachInvitationRoutes.js";
 import accessRoutes from "../routes/accessRoutes.js";
 import homeAccessRoutes from "../routes/homeAccessRoutes.js";
 import bugReportRoutes from "../routes/bugReportRoutes.js";
@@ -151,7 +150,7 @@ app.use(rateLimiter);
 
 // Health check endpoints (Render pings /health; logs visible in Render dashboard)
 app.get("/", (req, res) => {
-    res.json({ message: "Bainum Project API is running!", status: "OK" });
+    res.json({ message: "CATTAC API is running!", status: "OK" });
 });
 
 app.get("/health", (req, res) => {
@@ -182,7 +181,6 @@ app.use("/api", whisperRoutes);
 app.use("/api/invitations", invitationRoutes);
 app.use("/api/teacher-invitations", teacherInvitationRoutes);
 app.use("/api/coaches", coachRoutes);
-app.use("/api/coach-invitations", coachInvitationRoutes);
 app.use("/api/access", accessRoutes);
 app.use("/api/home-access", homeAccessRoutes);
 app.use("/api/classrooms", classroomRoutes);

@@ -257,5 +257,5 @@ RevAI supports a wide range of audio formats including:
 
 ## License
 
-Part of the Bainum Project.
+Part of the CATTAC platform.
 

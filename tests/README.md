@@ -1,6 +1,6 @@
 # Backend API Tests
 
-This directory contains automated API tests for the Bainum Project backend using Playwright.
+This directory contains automated API tests for the CATTAC backend using Playwright.
 
 ## Test Structure
 
