@@ -81,7 +81,13 @@ const classroomWhisperController = async (req, res) => {
         const uploadedBy = user.name || "Unknown";
 
         console.log("=== Classroom Audio Processing Request ===");
-        console.log("Body:", { teacherId, center, uploadedBy, hasFile: !!req.file });
+        console.log("Body:", {
+            teacherId,
+            classroomId: classroomDoc?._id || classroomId || null,
+            center: classroomDoc?.center || null,
+            uploadedBy,
+            hasFile: !!req.file,
+        });
 
         if (!fs.existsSync(filePath)) {
             return res.status(500).json({ message: "Uploaded file not found on server" });
@@ -201,7 +207,9 @@ const classroomWhisperController = async (req, res) => {
             categoryWPM,
             uploadedBy,
             date: assessmentDate,
-            center: center || classroomDoc?.center || null,
+            // Teachers upload from a classroom page and no longer send `center`
+            // in the body; take it from the classroom document when present.
+            center: classroomDoc?.center || null,
             classroomId: classroomDoc ? classroomDoc._id : null,
             activity: finalActivity,
             activityContext: "school",
