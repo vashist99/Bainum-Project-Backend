@@ -18,6 +18,7 @@ import {
     resolveValidatedLocation,
 } from "../lib/locationValidator.js";
 import { resolveActivityRecordingTargets } from "../lib/activityRecordingTargets.js";
+import { logActivity } from "../lib/activityLogService.js";
 
 dotenv.config();
 
@@ -173,6 +174,16 @@ export const activityRecordingController = async (req, res) => {
         if (fs.existsSync(filePath)) {
             try { fs.unlinkSync(filePath); } catch { /* ignore */ }
         }
+
+        // Activity log (teachers only reach here besides parents, who are
+        // dropped by the service role gate). Metadata only — no transcript.
+        void logActivity({
+            actor: user,
+            action: "recording-uploaded",
+            targetType: "assessment",
+            targetLabel: finalActivity,
+            detail: "Uploaded an activity recording for transcription",
+        });
 
         return res.status(200).json({
             message: "Audio processed — please review before saving.",

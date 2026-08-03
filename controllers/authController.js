@@ -12,6 +12,7 @@ import {
     applyAccessGrantsAndEnactForChild,
 } from "../lib/parentChildHelpers.js";
 import { resolveInvitationChildIds } from "../lib/invitationChildIds.js";
+import { logActivity } from "../lib/activityLogService.js";
 
 const validateUsername = (u) => /^[a-z0-9_]{3,30}$/.test((u || '').toLowerCase().trim());
 
@@ -179,6 +180,12 @@ export const login = async (req, res) => {
 
         const token = jwt.sign(userResponse, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
 
+        // Activity log (teachers/coaches only; the service drops other roles).
+        void logActivity({
+            actor: { id: userResponse.id, role: user.role, name: user.name },
+            action: "login",
+            detail: "Signed in",
+        });
 
         res.status(200).json({
             message: "Login successful",

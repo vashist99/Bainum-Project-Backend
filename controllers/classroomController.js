@@ -19,6 +19,7 @@ import {
 } from "../lib/notificationService.js";
 import { readSchoolFromBody, withSchoolField } from "../lib/schoolFieldAlias.js";
 import { materializeAndSyncClassroomChildren } from "../lib/classroomMembershipSync.js";
+import { logActivity } from "../lib/activityLogService.js";
 
 /**
  * Build the summary projection used by every classroom response. The
@@ -131,6 +132,15 @@ export const createClassroom = async (req, res) => {
         await fanOutClassroomAddedNotifications({
             classroom,
             recipients: teacherRecipients,
+        });
+
+        // Activity log — only rows for teachers/coaches; admin creates are dropped.
+        void logActivity({
+            actor: req.user,
+            action: "classroom-created",
+            targetType: "classroom",
+            targetId: classroom._id,
+            targetLabel: classroom.name,
         });
 
         res.status(201).json({
@@ -497,6 +507,17 @@ export const inviteParents = async (req, res) => {
             recipients: [...parentRecipients, ...teacherRecipients],
         });
 
+        if (addedParents.length > 0) {
+            void logActivity({
+                actor: req.user,
+                action: "roster-parents-added",
+                targetType: "classroom",
+                targetId: classroom._id,
+                targetLabel: classroom.name,
+                detail: `Added ${addedParents.length} parent${addedParents.length === 1 ? "" : "s"} to the roster`,
+            });
+        }
+
         res.status(200).json({
             message: `Added ${addedParents.length} parent${addedParents.length === 1 ? "" : "s"} to the classroom`,
             addedParents: addedParents.length,
@@ -589,6 +610,14 @@ export const deleteClassroom = async (req, res) => {
         });
 
         await Classroom.deleteOne({ _id: classroom._id });
+
+        void logActivity({
+            actor: req.user,
+            action: "classroom-deleted",
+            targetType: "classroom",
+            targetId: classroom._id,
+            targetLabel: classroom.name,
+        });
 
         return res.status(200).json({
             ok: true,
@@ -718,6 +747,15 @@ export const removeChildFromClassroom = async (req, res) => {
                 });
             }
         }
+
+        void logActivity({
+            actor: req.user,
+            action: "roster-child-removed",
+            targetType: "classroom",
+            targetId: classroom._id,
+            targetLabel: classroom.name,
+            detail: "Removed a child from the roster",
+        });
 
         return res.status(200).json({
             ok: true,

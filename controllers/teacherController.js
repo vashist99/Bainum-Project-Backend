@@ -5,6 +5,7 @@ import AccessGrant from "../models/AccessGrant.js";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
 import { readSchoolFromBody, withSchoolField, mapSchoolCollection } from "../lib/schoolFieldAlias.js";
+import { logActivity } from "../lib/activityLogService.js";
 
 function teacherApiPayload(teacher) {
     return withSchoolField({
@@ -237,6 +238,20 @@ export const updateTeacher = async (req, res) => {
         teacher.dateOfBirth = dateOfBirth;
 
         await teacher.save();
+
+        // Only self-edits by the teacher are logged; admin edits of a
+        // teacher's profile are dropped by the service role gate anyway,
+        // but the id check keeps the row semantically "their own action".
+        if (req.user?.role === "teacher" && String(req.user.id) === String(teacher._id)) {
+            void logActivity({
+                actor: req.user,
+                action: "profile-updated",
+                targetType: "profile",
+                targetId: teacher._id,
+                targetLabel: teacher.name,
+                detail: "Updated their profile",
+            });
+        }
 
         res.status(200).json({
             message: "Teacher updated successfully",

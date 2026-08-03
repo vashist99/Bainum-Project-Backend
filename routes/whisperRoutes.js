@@ -23,6 +23,7 @@ import {
 import { teacherMayAccessChild } from '../lib/noteAccessHelpers.js';
 import { Parent, Teacher } from '../models/User.js';
 import { parentMayAccessChild, getResolvedChildIdStringsForParent } from '../lib/parentChildHelpers.js';
+import { logActivity } from '../lib/activityLogService.js';
 import { isPredefinedActivity, validateCustomActivity } from '../lib/activityValidator.js';
 import {
     isHomeAssessment,
@@ -441,6 +442,16 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             );
         }
 
+        // Activity log — teachers only (parents dropped by the service gate).
+        void logActivity({
+            actor: user,
+            action: "transcript-accepted",
+            targetType: "assessment",
+            targetId: teacherAssessmentRef?.assessmentId,
+            targetLabel: finalActivity,
+            detail: "Accepted an activity transcript",
+        });
+
         return res.status(201).json({
             message: user.role === "teacher"
                 ? "Activity recording saved to your profile."
@@ -809,6 +820,17 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
                 );
             }
         }
+
+        void logActivity({
+            actor: req.user,
+            action: "transcript-accepted",
+            targetType: classroomDoc ? "classroom" : "assessment",
+            targetId: classroomDoc ? classroomDoc._id : assessment._id,
+            targetLabel: classroomDoc?.name || finalActivity || "",
+            detail: classroomDoc
+                ? "Accepted a classroom recording transcript"
+                : "Accepted a recording transcript",
+        });
 
         res.status(201).json({
             message: classroomDoc

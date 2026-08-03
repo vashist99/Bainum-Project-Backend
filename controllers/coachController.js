@@ -4,6 +4,7 @@ import Classroom from "../models/Classroom.js";
 import CoachClassroomGrant from "../models/CoachClassroomGrant.js";
 import { createCoachGrantNotification } from "../lib/notificationService.js";
 import { coachClassroomTier } from "../lib/permissions.js";
+import { logActivity } from "../lib/activityLogService.js";
 
 function isValidId(id) {
     return mongoose.Types.ObjectId.isValid(id);
@@ -253,6 +254,15 @@ export const requestClassroomAccess = async (req, res) => {
             message: `Coach ${coach?.name ?? ""} requested access to classroom "${classroom.name}"`,
         });
 
+        void logActivity({
+            actor: req.user,
+            action: "coach-access-requested",
+            targetType: "classroom",
+            targetId: classroom._id,
+            targetLabel: classroom.name,
+            detail: "Requested classroom access",
+        });
+
         res.status(201).json({ message: "Access requested", grant, created: true });
     } catch (error) {
         console.error("Error requesting classroom access:", error);
@@ -316,6 +326,16 @@ export const approveGrant = async (req, res) => {
             message: `Your access request for classroom "${classroom.name}" was approved`,
         });
 
+        // Logged only when a teacher decides; admin decisions are dropped.
+        void logActivity({
+            actor: req.user,
+            action: "coach-grant-approved",
+            targetType: "grant",
+            targetId: grant._id,
+            targetLabel: classroom.name,
+            detail: "Approved a coach access request",
+        });
+
         res.status(200).json({ message: "Access approved", grant });
     } catch (error) {
         console.error("Error approving coach grant:", error);
@@ -350,6 +370,15 @@ export const denyGrant = async (req, res) => {
             message: `Your access request for classroom "${classroom.name}" was denied`,
         });
 
+        void logActivity({
+            actor: req.user,
+            action: "coach-grant-denied",
+            targetType: "grant",
+            targetId: grant._id,
+            targetLabel: classroom.name,
+            detail: "Denied a coach access request",
+        });
+
         res.status(200).json({ message: "Access denied", grant });
     } catch (error) {
         console.error("Error denying coach grant:", error);
@@ -382,6 +411,15 @@ export const revokeGrant = async (req, res) => {
             type: "coach-access-revoked",
             classroom,
             message: `Your access to classroom "${classroom.name}" was revoked`,
+        });
+
+        void logActivity({
+            actor: req.user,
+            action: "coach-grant-revoked",
+            targetType: "grant",
+            targetId: grant._id,
+            targetLabel: classroom.name,
+            detail: "Revoked a coach's classroom access",
         });
 
         res.status(200).json({ message: "Access revoked", grant });

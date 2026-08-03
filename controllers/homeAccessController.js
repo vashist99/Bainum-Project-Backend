@@ -11,6 +11,7 @@ import {
     fanOutHomeAccessRequestedNotifications,
     fanOutHomeTranscriptAccessChangedNotifications,
 } from "../lib/notificationService.js";
+import { logActivity } from "../lib/activityLogService.js";
 
 function isValidId(id) {
     return mongoose.Types.ObjectId.isValid(id);
@@ -358,6 +359,15 @@ export const requestHomeAccess = async (req, res) => {
                 notifyErr.message
             );
         }
+
+        // Logged for teacher requesters only; admin requests are dropped.
+        void logActivity({
+            actor: user,
+            action: "home-access-requested",
+            targetType: "child",
+            targetId: childId,
+            detail: "Requested home view access for a child",
+        });
 
         return res.status(201).json({
             message: "Request sent. The child's parent will be notified.",

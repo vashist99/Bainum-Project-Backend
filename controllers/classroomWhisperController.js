@@ -9,6 +9,7 @@ import { canManageClassroom } from "../lib/classroomHelpers.js";
 import { roleHasCapability } from "../lib/permissions.js";
 import { isPredefinedActivity, validateCustomActivity } from "../lib/activityValidator.js";
 import { resolveValidatedLocation } from "../lib/locationValidator.js";
+import { logActivity } from "../lib/activityLogService.js";
 
 dotenv.config();
 
@@ -216,6 +217,15 @@ const classroomWhisperController = async (req, res) => {
                 console.warn("Could not delete uploaded file:", cleanupError.message);
             }
         }
+
+        void logActivity({
+            actor: req.user,
+            action: "recording-uploaded",
+            targetType: "classroom",
+            targetId: classroomDoc?._id,
+            targetLabel: classroomDoc?.name || "",
+            detail: "Uploaded a classroom recording for transcription",
+        });
 
         res.status(200).json({
             message: "Audio processed successfully - please review transcript",

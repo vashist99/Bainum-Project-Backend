@@ -23,6 +23,7 @@ import coachRoutes from "../routes/coachRoutes.js";
 import accessRoutes from "../routes/accessRoutes.js";
 import homeAccessRoutes from "../routes/homeAccessRoutes.js";
 import bugReportRoutes from "../routes/bugReportRoutes.js";
+import activityLogRoutes from "../routes/activityLogRoutes.js";
 import classroomRoutes from "../routes/classroomRoutes.js";
 import notificationRoutes from "../routes/notificationRoutes.js";
 import requireIngestApiKey from "../middleware/requireIngestApiKey.js";
@@ -186,6 +187,7 @@ app.use("/api/home-access", homeAccessRoutes);
 app.use("/api/classrooms", classroomRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/bug-reports", bugReportRoutes);
+app.use("/api/activity-log", activityLogRoutes);
 
 app.listen(process.env.PORT, () => {
     console.log(`Server is running on port ${process.env.PORT}`);
