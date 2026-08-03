@@ -28,6 +28,7 @@ export const ACTIVITY_ACTIONS = Object.freeze([
     "coach-grant-revoked",
     "home-access-requested",
     "profile-updated",
+    "account-deleted",
 ]);
 
 /** Only these roles ever appear as actors. */

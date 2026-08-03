@@ -13,6 +13,7 @@ import {
 } from "../lib/parentChildHelpers.js";
 import { resolveInvitationChildIds } from "../lib/invitationChildIds.js";
 import { logActivity } from "../lib/activityLogService.js";
+import { deleteTeacherAccount, deleteCoachAccount } from "../lib/accountDeletionService.js";
 
 const validateUsername = (u) => /^[a-z0-9_]{3,30}$/.test((u || '').toLowerCase().trim());
 
@@ -415,12 +416,18 @@ export const registerParent = async (req, res) => {
  */
 export const registerTeacher = async (req, res) => {
     try {
-        const { password, invitationToken, username } = req.body;
+        const { password, invitationToken, username, termsAccepted } = req.body;
 
         // Validate required fields
         if (!password || !invitationToken) {
             return res.status(400).json({ 
                 message: "Password and invitation token are required" 
+            });
+        }
+
+        if (termsAccepted !== true) {
+            return res.status(400).json({
+                message: "You must accept the Terms and Conditions to create an account",
             });
         }
 
@@ -478,6 +485,7 @@ export const registerTeacher = async (req, res) => {
             teacher.center = invitation.center || teacher.center;
             teacher.education = invitation.education || teacher.education;
             teacher.dateOfBirth = invitation.dateOfBirth || teacher.dateOfBirth;
+            teacher.termsAcceptedAt = new Date();
             await teacher.save();
         } else {
             // New teacher: create account
@@ -494,7 +502,8 @@ export const registerTeacher = async (req, res) => {
                 role: 'teacher',
                 center: invitation.center,
                 education: invitation.education,
-                dateOfBirth: invitation.dateOfBirth
+                dateOfBirth: invitation.dateOfBirth,
+                termsAcceptedAt: new Date(),
             });
 
             await teacher.save();
@@ -534,13 +543,19 @@ export const registerTeacher = async (req, res) => {
  */
 export const registerCoach = async (req, res) => {
     try {
-        const { name, email, password, username } = req.body;
+        const { name, email, password, username, termsAccepted } = req.body;
 
         const cleanName = String(name || "").trim();
         const cleanEmail = String(email || "").toLowerCase().trim();
         if (!cleanName || !cleanEmail || !password) {
             return res.status(400).json({
                 message: "All fields are required: name, email, username, password"
+            });
+        }
+
+        if (termsAccepted !== true) {
+            return res.status(400).json({
+                message: "You must accept the Terms and Conditions to create an account",
             });
         }
 
@@ -578,6 +593,7 @@ export const registerCoach = async (req, res) => {
             username: cleanUsername,
             password: hashedPassword,
             role: 'coach',
+            termsAcceptedAt: new Date(),
         });
         await coach.save();
 
@@ -600,6 +616,62 @@ export const registerCoach = async (req, res) => {
         res.status(500).json({
             message: error.message || "Internal server error"
         });
+    }
+};
+
+/**
+ * DELETE /api/auth/me — self-service account deletion for teachers and
+ * coaches (route-gated via requireCapability("deleteOwnAccount")).
+ * Body: { password, confirmation }. The password is re-verified and the
+ * confirmation must be the literal string "DELETE" — client-side checks
+ * are not trusted. Cleanup semantics live in lib/accountDeletionService.js.
+ */
+export const deleteOwnAccount = async (req, res) => {
+    try {
+        const { password, confirmation } = req.body || {};
+        const user = req.user;
+
+        if (confirmation !== "DELETE") {
+            return res.status(400).json({
+                message: 'Type DELETE to confirm account deletion',
+            });
+        }
+        if (!password) {
+            return res.status(400).json({ message: "Password is required" });
+        }
+
+        const Model = user.role === "teacher" ? Teacher : Coach;
+        const account = await Model.findById(user.id);
+        if (!account) {
+            return res.status(404).json({ message: "Account not found" });
+        }
+
+        // Same hashed/legacy-plain-text handling as login.
+        let isPasswordValid;
+        if (/^\$2[aby]\$/.test(account.password)) {
+            isPasswordValid = await bcrypt.compare(password, account.password);
+        } else {
+            isPasswordValid = account.password === password;
+        }
+        if (!isPasswordValid) {
+            return res.status(401).json({ message: "Incorrect password" });
+        }
+
+        const result =
+            user.role === "teacher"
+                ? await deleteTeacherAccount(account._id)
+                : await deleteCoachAccount(account._id);
+        if (!result.deleted) {
+            return res.status(404).json({ message: "Account not found" });
+        }
+
+        res.status(200).json({
+            message:
+                "Your account has been deleted. Classroom recordings and talk data are preserved on the platform.",
+        });
+    } catch (error) {
+        console.error("Account deletion error:", error);
+        res.status(500).json({ message: error.message || "Internal server error" });
     }
 };
 

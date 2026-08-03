@@ -26,6 +26,7 @@ const validBody = {
     email: "coach@example.com",
     username: "coachcarter",
     password: "secret123",
+    termsAccepted: true,
 };
 
 describe("registerCoach — open self-registration (no invitation)", () => {

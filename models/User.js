@@ -26,6 +26,8 @@ const teacherSchema = new mongoose.Schema({
      * `Teacher.find({ coachId })`.
      */
     coachId: { type: mongoose.Schema.Types.ObjectId, ref: "Coach", default: null, index: true },
+    /** When the user accepted the Terms and Conditions at sign-up. Null for accounts created before the terms gate. */
+    termsAcceptedAt: { type: Date, default: null },
 });
 
 const coachSchema = new mongoose.Schema({
@@ -34,6 +36,8 @@ const coachSchema = new mongoose.Schema({
     email: { type: String, required: true, unique: true },
     role: { type: String, required: true, enum: ["coach"] },
     password: { type: String, required: true },
+    /** When the user accepted the Terms and Conditions at sign-up. Null for accounts created before the terms gate. */
+    termsAcceptedAt: { type: Date, default: null },
 }, {
     timestamps: true
 });
