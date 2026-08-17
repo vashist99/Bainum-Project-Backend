@@ -10,6 +10,7 @@ import {
 import Assessment from "../models/Assessment.js";
 import { Child } from "../models/User.js";
 import { recomputeAndSaveChildrenCohortStats } from "../lib/cohortStatsService.js";
+import { redactPii } from "../lib/piiRedaction.js";
 
 /**
  * ENACT integration: receive audio from the ENACT mobile app, transcribe it via RevAI,
@@ -60,7 +61,7 @@ const enactController = async (req, res) => {
             language: "en",
         });
 
-        const transcript = revai.getTranscript(transcriptionResult);
+        const transcript = (await redactPii(revai.getTranscript(transcriptionResult) || "")).text;
         const durationSeconds = transcriptionResult?.durationSeconds ?? null;
         const wordCount = (transcript || "").split(/\s+/).filter((w) => w.length > 0).length;
         const durationMinutes = durationSeconds && durationSeconds > 0 ? durationSeconds / 60 : null;

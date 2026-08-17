@@ -38,6 +38,7 @@ import { canManageClassroom } from '../lib/classroomHelpers.js';
 import { roleHasCapability } from '../lib/permissions.js';
 import { transcriptExpiryFrom } from '../lib/transcriptRetention.js';
 import { fanOutClassroomRecordingAddedNotifications } from '../lib/notificationService.js';
+import { redactTranscriptPayload } from '../lib/piiRedaction.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -362,9 +363,11 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             return res.status(400).json({ message: "Invalid recording date" });
         }
 
+        const redacted = await redactTranscriptPayload({ transcript, ragSegments });
+
         const base = {
             audioFileName: audioFileName || "",
-            transcript: transcript || "",
+            transcript: redacted.transcript,
             scienceTalk: 0,
             socialTalk: 0,
             literatureTalk: 0,
@@ -372,7 +375,7 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             keywordCounts: keywordCounts || { science: 0, social: 0, literature: 0, language: 0 },
             categoryWordCount: categoryWordCount || { science: 0, social: 0, literature: 0, language: 0 },
             ragScores: null,
-            ragSegments: ragSegments || null,
+            ragSegments: redacted.ragSegments || null,
             classificationMethod: classificationMethod || "keyword-only",
             uploadedBy: uploadedBy || user.name || "Unknown",
             date: assessmentDate,
@@ -482,11 +485,13 @@ router.post('/assessments/accept', async (req, res) => {
             ? new mongoose.Types.ObjectId(childId) 
             : childId;
 
+        const redacted = await redactTranscriptPayload({ transcript, ragSegments });
+
         // Create and save assessment
         const assessment = new Assessment({
             childId: childIdObject,
             audioFileName: audioFileName || '',
-            transcript: transcript || '',
+            transcript: redacted.transcript,
             scienceTalk: scienceTalk || 0,
             socialTalk: socialTalk || 0,
             literatureTalk: literatureTalk || 0,
@@ -504,7 +509,7 @@ router.post('/assessments/accept', async (req, res) => {
                 language: 0
             },
             ragScores: ragScores || null,
-            ragSegments: ragSegments || null,
+            ragSegments: redacted.ragSegments || null,
             classificationMethod: classificationMethod || 'keyword-only',
             uploadedBy: uploadedBy || "Unknown",
             date: date ? new Date(date) : new Date(),
@@ -769,11 +774,13 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
         const safeUploadedBy = uploadedBy || "Unknown";
         const safeCenter = center || teacherDoc.center || null;
 
+        const redacted = await redactTranscriptPayload({ transcript, ragSegments });
+
         const assessment = new TeacherAssessment({
             teacherId: teacherIdObject,
             classroomId: classroomDoc ? classroomDoc._id : undefined,
             audioFileName: audioFileName || '',
-            transcript: transcript || '',
+            transcript: redacted.transcript,
             scienceTalk: scienceTalk || 0,
             socialTalk: socialTalk || 0,
             literatureTalk: literatureTalk || 0,
@@ -781,7 +788,7 @@ router.post('/assessments/teacher/accept', authenticateToken, async (req, res) =
             keywordCounts: safeKeywordCounts,
             categoryWordCount: safeCategoryWordCount,
             ragScores: ragScores || null,
-            ragSegments: ragSegments || null,
+            ragSegments: redacted.ragSegments || null,
             classificationMethod: classificationMethod || 'keyword-only',
             uploadedBy: safeUploadedBy,
             date: assessmentDate,

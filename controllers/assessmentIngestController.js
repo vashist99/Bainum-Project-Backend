@@ -4,6 +4,7 @@ import Assessment from "../models/Assessment.js";
 import { recomputeAndSaveChildrenCohortStats } from "../lib/cohortStatsService.js";
 import { getResolvedChildIdStringsForParent } from "../lib/parentChildHelpers.js";
 import { transcriptExpiryFrom } from "../lib/transcriptRetention.js";
+import { redactTranscriptPayload } from "../lib/piiRedaction.js";
 
 /**
  * Case-insensitive parent email lookup.
@@ -67,6 +68,8 @@ export const ingestAssessmentByParentEmail = async (req, res) => {
             return res.status(400).json({ message: "Invalid date in assessment" });
         }
 
+        const redacted = await redactTranscriptPayload({ transcript, ragSegments });
+
         const created = [];
 
         for (const cidStr of childIdStrings) {
@@ -77,7 +80,7 @@ export const ingestAssessmentByParentEmail = async (req, res) => {
             const doc = new Assessment({
                 childId: childIdObject,
                 audioFileName: audioFileName || "",
-                transcript: transcript || "",
+                transcript: redacted.transcript,
                 scienceTalk: scienceTalk || 0,
                 socialTalk: socialTalk || 0,
                 literatureTalk: literatureTalk || 0,
@@ -95,7 +98,7 @@ export const ingestAssessmentByParentEmail = async (req, res) => {
                     language: 0,
                 },
                 ragScores: ragScores ?? null,
-                ragSegments: ragSegments ?? null,
+                ragSegments: redacted.ragSegments ?? null,
                 classificationMethod: classificationMethod || "keyword-only",
                 uploadedBy: uploadedBy || "External ingest",
                 date: assessmentDate,

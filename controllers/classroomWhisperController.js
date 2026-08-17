@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import revai from "../lib/revai.js";
 import ragClassifier from "../lib/ragClassifier.js";
 import { analyzeTranscript, extractKeywordSegments, computeCategoryWordCountFromSegments, deriveCategoryWordCountFromKeywordCounts } from "../lib/transcriptProcessor.js";
+import { redactPii } from "../lib/piiRedaction.js";
 import Classroom from "../models/Classroom.js";
 import { canManageClassroom } from "../lib/classroomHelpers.js";
 import { roleHasCapability } from "../lib/permissions.js";
@@ -113,7 +114,7 @@ const classroomWhisperController = async (req, res) => {
             signal: abortController.signal
         });
 
-        const transcript = revai.getTranscript(transcriptionResult);
+        const transcript = (await redactPii(revai.getTranscript(transcriptionResult) || "")).text;
         const durationSeconds = transcriptionResult?.durationSeconds ?? null;
         const wordCount = (transcript || '').split(/\s+/).filter(w => w.length > 0).length;
         const durationMinutes = durationSeconds && durationSeconds > 0 ? durationSeconds / 60 : null;

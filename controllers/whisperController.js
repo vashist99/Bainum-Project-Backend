@@ -3,6 +3,7 @@ import fs from "fs";
 import revai from "../lib/revai.js";
 import ragClassifier from "../lib/ragClassifier.js";
 import { analyzeTranscript, extractKeywordSegments, computeCategoryWordCountFromSegments, deriveCategoryWordCountFromKeywordCounts } from "../lib/transcriptProcessor.js";
+import { redactPii } from "../lib/piiRedaction.js";
 
 dotenv.config();
 
@@ -87,7 +88,7 @@ const revaiController = async (req, res) => {
             jobId: transcriptionResult.jobId
         });
         
-        const transcript = revai.getTranscript(transcriptionResult);
+        const transcript = (await redactPii(revai.getTranscript(transcriptionResult) || "")).text;
         const durationSeconds = transcriptionResult?.durationSeconds ?? null;
         const wordCount = (transcript || '').split(/\s+/).filter(w => w.length > 0).length;
         const durationMinutes = durationSeconds && durationSeconds > 0 ? durationSeconds / 60 : null;

@@ -20,6 +20,10 @@ playwright/.cache/
 # Uploads
 uploads/
 
+# Transformers.js NER model cache (PII redaction)
+.cache/
+cattac-transformers-cache/
+
 # Migration backups (contain raw assessment data)
 scripts/backups/
 

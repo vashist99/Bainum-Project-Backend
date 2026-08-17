@@ -19,6 +19,7 @@ import {
 } from "../lib/locationValidator.js";
 import { resolveActivityRecordingTargets } from "../lib/activityRecordingTargets.js";
 import { logActivity } from "../lib/activityLogService.js";
+import { redactPii } from "../lib/piiRedaction.js";
 
 dotenv.config();
 
@@ -92,7 +93,7 @@ export const activityRecordingController = async (req, res) => {
             signal: abortController.signal,
         });
 
-        const transcript = revai.getTranscript(transcriptionResult);
+        const transcript = (await redactPii(revai.getTranscript(transcriptionResult) || "")).text;
         const durationSeconds = transcriptionResult?.durationSeconds ?? null;
         const wordCount = (transcript || "").split(/\s+/).filter((w) => w.length > 0).length;
         const durationMinutes = durationSeconds && durationSeconds > 0 ? durationSeconds / 60 : null;
