@@ -87,6 +87,12 @@ const buildAllowedOrigins = () => {
   if (allowedOrigins.length === 0 && process.env.FRONTEND_URL) {
     allowedOrigins.push(process.env.FRONTEND_URL);
   }
+
+  // Always allow the production Vercel app. A 502/crash from Render otherwise
+  // surfaces in the browser as a CORS failure with no ACAO header.
+  const productionOrigins = [
+    "https://bainum-frontend-prod.vercel.app",
+  ];
   
   // Always include localhost origins for development
   const localhostOrigins = [
@@ -97,7 +103,7 @@ const buildAllowedOrigins = () => {
   ];
   
   // Add localhost origins if not already present
-  localhostOrigins.forEach(origin => {
+  [...productionOrigins, ...localhostOrigins].forEach(origin => {
     if (!allowedOrigins.includes(origin)) {
       allowedOrigins.push(origin);
     }
@@ -108,6 +114,7 @@ const buildAllowedOrigins = () => {
 };
 
 const whitelist = buildAllowedOrigins();
+console.log("CORS allowed origins:", whitelist.join(", "));
 
 const corsOptions = { 
   origin: function (origin, callback) {
@@ -123,7 +130,9 @@ const corsOptions = {
     if (whitelist.includes(originWithoutSlash)) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      // Do not `callback(new Error(...))` — that becomes a 500 without CORS
+      // headers, which the browser reports as a CORS failure.
+      callback(null, false);
     }
   },
   credentials: true,

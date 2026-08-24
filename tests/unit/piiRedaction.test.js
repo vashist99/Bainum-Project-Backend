@@ -76,16 +76,15 @@ describe("redactPii", () => {
         assert.equal(typeof out.counts, "object");
     });
 
-    test("thrown recognizer errors fail closed and do not return the original string", async () => {
+    test("thrown recognizer errors fall back to compromise and do not return the original string", async () => {
         __setPersonSpanFinderForTests(async () => {
             throw new Error("ner exploded with secret Maya Lopez");
         });
         const raw = "Maya Lopez lives here";
-        await assert.rejects(() => redactPii(raw), (err) => {
-            assert.equal(err.message, "PII redaction failed");
-            assert.equal(err.message.includes("Maya"), false);
-            return true;
-        });
+        const { text } = await redactPii(raw);
+        assert.equal(text.includes("Maya"), false);
+        assert.equal(text.includes("Lopez"), false);
+        assert.match(text, /\[PERSON\]/);
         __resetPersonSpanFinderForTests();
     });
 });
