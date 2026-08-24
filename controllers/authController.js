@@ -17,9 +17,27 @@ import { deleteTeacherAccount, deleteCoachAccount } from "../lib/accountDeletion
 
 const validateUsername = (u) => /^[a-z0-9_]{3,30}$/.test((u || '').toLowerCase().trim());
 
+async function findAccountByEmail(email) {
+    return (
+        (await Admin.findOne({ email })) ||
+        (await Teacher.findOne({ email })) ||
+        (await Parent.findOne({ email })) ||
+        (await Coach.findOne({ email }))
+    );
+}
+
+async function findAccountByUsername(username) {
+    return (
+        (await Admin.findOne({ username })) ||
+        (await Teacher.findOne({ username })) ||
+        (await Parent.findOne({ username })) ||
+        (await Coach.findOne({ username }))
+    );
+}
+
 export const register = async (req, res) => {
     try {
-        const { name, email, password, role, username } = req.body;
+        const { name, email, password, role, username, termsAccepted } = req.body;
 
         if (!name || !email || !password || !role) {
             return res.status(400).json({ message: "Name, email, password, and role are required" });
@@ -29,40 +47,60 @@ export const register = async (req, res) => {
             return res.status(400).json({ message: "Username is required (3-30 chars, lowercase letters, numbers, underscore only)" });
         }
         const cleanUsername = username.toLowerCase().trim();
+        const cleanEmail = String(email).toLowerCase().trim();
 
-        // Determine which model to use based on role. Coaches (like parents)
-        // may only register through an invitation link, never here.
+        if (password.length < 6) {
+            return res.status(400).json({ message: "Password must be at least 6 characters" });
+        }
+
+        // Open signup for admin / teacher / parent. Invitation flows remain on
+        // register-teacher and register-parent. Coaches self-register on
+        // /api/auth/register-coach.
         let UserModel;
+        let extraFields = {};
         if (role === "admin") {
             UserModel = Admin;
         } else if (role === "teacher") {
+            if (termsAccepted !== true) {
+                return res.status(400).json({
+                    message: "You must accept the Terms and Conditions to create an account",
+                });
+            }
             UserModel = Teacher;
+            extraFields = {
+                center: "Unassigned",
+                education: "Unspecified",
+                dateOfBirth: new Date("2000-01-01"),
+                termsAcceptedAt: new Date(),
+            };
+        } else if (role === "parent") {
+            UserModel = Parent;
+            extraFields = {
+                invitationAccepted: true,
+                childIds: [],
+            };
         } else {
             return res.status(400).json({ message: "Invalid role" });
         }
 
-        // Check if user already exists
-        const existingUser = await UserModel.findOne({ email });
-        if (existingUser) {
+        if (await findAccountByEmail(cleanEmail)) {
             return res.status(400).json({ message: "User already exists" });
         }
 
-        const existingByUsername = await UserModel.findOne({ username: cleanUsername });
-        if (existingByUsername) {
+        if (await findAccountByUsername(cleanUsername)) {
             return res.status(400).json({ message: "Username is already taken" });
         }
 
-        // Hash password before saving
         const saltRounds = 10;
         const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-        // Create new user
         const user = new UserModel({
             name,
-            email,
+            email: cleanEmail,
             username: cleanUsername,
             role,
             password: hashedPassword,
+            ...extraFields,
         });
 
         const payload = {
@@ -78,10 +116,15 @@ export const register = async (req, res) => {
         await user.save();
 
         res.status(201).json({
-            token
+            message: "Account created successfully",
+            user: token,
+            token,
         });
     } catch (error) {
         console.error("Registration error:", error);
+        if (error?.name === "ValidationError") {
+            return res.status(400).json({ message: error.message });
+        }
         res.status(500).json({ message: error.message });
     }
 };
