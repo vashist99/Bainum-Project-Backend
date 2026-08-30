@@ -107,7 +107,7 @@ test.describe('Teacher Assessments API Endpoints', () => {
 
     expect(response.status()).toBe(403);
     const body = await response.json();
-    expect(body.message).toMatch(/teacher/i);
+    expect(body.message).toMatch(/permission/i);
   });
 
   test('POST /api/assessments/teacher/accept - admin cannot save classroom recordings', async ({ request }) => {
@@ -138,7 +138,7 @@ test.describe('Teacher Assessments API Endpoints', () => {
 
     expect(response.status()).toBe(403);
     const body = await response.json();
-    expect(body.message).toMatch(/only classroom teachers/i);
+    expect(body.message).toMatch(/permission/i);
   });
 
   test('POST /api/whisper/classroom - should require authentication', async ({ request }) => {

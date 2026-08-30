@@ -33,12 +33,10 @@ import {
     stripHomeTranscriptFields,
 } from '../lib/talkDataAccess.js';
 import { resolveParentAcceptTarget } from '../lib/activityRecordingTargets.js';
-import Classroom from '../models/Classroom.js';
-import { canManageClassroom } from '../lib/classroomHelpers.js';
 import { roleHasCapability } from '../lib/permissions.js';
 import { transcriptExpiryFrom } from '../lib/transcriptRetention.js';
-import { fanOutClassroomRecordingAddedNotifications } from '../lib/notificationService.js';
 import { redactTranscriptPayload } from '../lib/piiRedaction.js';
+import { acceptTeacherAssessment } from '../controllers/teacherAcceptController.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -710,146 +708,7 @@ router.get('/assessments/teacher/:teacherId/latest', authenticateToken, async (r
 // classroomId when classroom-scoped). Classroom talk lives on the classroom
 // homepage; child data pages show home talk only, so no per-child copies
 // are created.
-router.post('/assessments/teacher/accept', authenticateToken, async (req, res) => {
-    try {
-        const { teacherId, audioFileName, transcript, scienceTalk, socialTalk, literatureTalk, languageDevelopment, keywordCounts, categoryWordCount, ragScores, ragSegments, classificationMethod, uploadedBy, date, center, wordCount, durationSeconds, wordsPerMinute, categoryWPM, classroomId, activity, location } = req.body;
-
-        // Only teachers persist classroom recordings (admin upload removed by
-        // the add-coach-role change; coaches are read-only by design).
-        if (!roleHasCapability(req.user?.role, "uploadClassroomRecording")) {
-            return res.status(403).json({ message: "Only classroom teachers can save classroom recordings" });
-        }
-
-        if (!teacherId) {
-            return res.status(400).json({ message: "Teacher ID is required" });
-        }
-
-        // Re-validate activity and location server-side (school context) so the
-        // client-side vetting can't be bypassed. Both optional here for legacy
-        // clients; the classroom modal always sends an activity.
-        const finalActivity = String(activity || "").trim() || null;
-        if (finalActivity && !isPredefinedActivity(finalActivity, "school")) {
-            const decision = await validateCustomActivity(finalActivity, "school");
-            if (!decision.accepted) {
-                return res.status(400).json({
-                    message: decision.reason || "Custom activity was not accepted for this context.",
-                });
-            }
-        }
-        const locationResult = await resolveValidatedLocation(location, "school");
-        if (!locationResult.ok) {
-            return res.status(400).json({ message: locationResult.message });
-        }
-
-        // Classroom-scoped accept: validate and authorize BEFORE any write so a
-        // rejected request leaves no orphaned TeacherAssessment behind.
-        let classroomDoc = null;
-        if (classroomId) {
-            if (!mongoose.Types.ObjectId.isValid(classroomId)) {
-                return res.status(400).json({ message: "Invalid classroom id" });
-            }
-            classroomDoc = await Classroom.findById(classroomId);
-            if (!classroomDoc) {
-                return res.status(404).json({ message: "Classroom not found" });
-            }
-            if (!canManageClassroom(req.user, classroomDoc)) {
-                return res.status(403).json({ message: "You do not have access to this classroom" });
-            }
-        }
-
-        const teacherIdObject = mongoose.Types.ObjectId.isValid(teacherId)
-            ? new mongoose.Types.ObjectId(teacherId)
-            : teacherId;
-
-        const teacherDoc = await Teacher.findById(teacherIdObject);
-        if (!teacherDoc) {
-            return res.status(404).json({ message: "Teacher not found" });
-        }
-
-        const assessmentDate = date ? new Date(date) : new Date();
-        const transcriptExpiresAt = transcriptExpiryFrom(assessmentDate);
-        const safeKeywordCounts = keywordCounts || { science: 0, social: 0, literature: 0, language: 0 };
-        const safeCategoryWordCount = categoryWordCount || { science: 0, social: 0, literature: 0, language: 0 };
-        const safeCategoryWPM = categoryWPM ?? { science: null, social: null, literature: null, language: null };
-        const safeUploadedBy = uploadedBy || "Unknown";
-        const safeCenter = center || teacherDoc.center || null;
-
-        const redacted = await redactTranscriptPayload({ transcript, ragSegments });
-
-        const assessment = new TeacherAssessment({
-            teacherId: teacherIdObject,
-            classroomId: classroomDoc ? classroomDoc._id : undefined,
-            audioFileName: audioFileName || '',
-            transcript: redacted.transcript,
-            scienceTalk: scienceTalk || 0,
-            socialTalk: socialTalk || 0,
-            literatureTalk: literatureTalk || 0,
-            languageDevelopment: languageDevelopment || 0,
-            keywordCounts: safeKeywordCounts,
-            categoryWordCount: safeCategoryWordCount,
-            ragScores: ragScores || null,
-            ragSegments: redacted.ragSegments || null,
-            classificationMethod: classificationMethod || 'keyword-only',
-            uploadedBy: safeUploadedBy,
-            date: assessmentDate,
-            transcriptExpiresAt,
-            center: safeCenter,
-            activity: finalActivity || undefined,
-            activityContext: 'school',
-            location: locationResult.location || undefined,
-            wordCount: wordCount ?? null,
-            durationSeconds: durationSeconds ?? null,
-            wordsPerMinute: wordsPerMinute ?? null,
-            categoryWPM: safeCategoryWPM,
-        });
-
-        await assessment.save();
-        console.log("Teacher assessment saved after user acceptance");
-
-        await recomputeAndSaveTeachersCohortStats().catch((err) => console.error("Failed to update teachers cohort stats:", err));
-
-        if (
-            classroomDoc &&
-            (req.user?.role === "admin" || req.user?.role === "teacher")
-        ) {
-            try {
-                const parentIds = (classroomDoc.parents || []).map(
-                    (p) => p._id ?? p
-                );
-                await fanOutClassroomRecordingAddedNotifications({
-                    classroom: classroomDoc,
-                    parentIds,
-                });
-            } catch (notifyErr) {
-                console.error(
-                    "[whisperRoutes] classroom recording notification failed:",
-                    notifyErr.message
-                );
-            }
-        }
-
-        void logActivity({
-            actor: req.user,
-            action: "transcript-accepted",
-            targetType: classroomDoc ? "classroom" : "assessment",
-            targetId: classroomDoc ? classroomDoc._id : assessment._id,
-            targetLabel: classroomDoc?.name || finalActivity || "",
-            detail: classroomDoc
-                ? "Accepted a classroom recording transcript"
-                : "Accepted a recording transcript",
-        });
-
-        res.status(201).json({
-            message: classroomDoc
-                ? "Classroom recording saved."
-                : "Teacher assessment saved successfully",
-            assessment,
-        });
-    } catch (error) {
-        console.error("Error saving teacher assessment:", error);
-        res.status(500).json({ message: error.message });
-    }
-});
+router.post('/assessments/teacher/accept', authenticateToken, acceptTeacherAssessment);
 
 // Route to delete a teacher assessment (recalculates cohort thresholds)
 router.delete('/assessments/teacher/:assessmentId', authenticateToken, async (req, res) => {

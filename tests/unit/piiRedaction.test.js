@@ -128,10 +128,18 @@ describe("persist and generation hooks", () => {
             path.join(backendRoot, "routes/whisperRoutes.js"),
             "utf8"
         );
-        assert.equal(
-            (whisperRoutes.match(/redactTranscriptPayload/g) || []).length >= 4,
-            true
+        const teacherAccept = fs.readFileSync(
+            path.join(backendRoot, "controllers/teacherAcceptController.js"),
+            "utf8"
         );
+        const writePathHits =
+            (whisperRoutes.match(/redactTranscriptPayload/g) || []).length +
+            (teacherAccept.match(/redactTranscriptPayload/g) || []).length;
+        assert.ok(
+            writePathHits >= 4,
+            `expected >= 4 redactTranscriptPayload calls on write paths, got ${writePathHits}`
+        );
+        assert.ok(teacherAccept.includes("redactTranscriptPayload"));
         const ingest = fs.readFileSync(
             path.join(backendRoot, "controllers/assessmentIngestController.js"),
             "utf8"

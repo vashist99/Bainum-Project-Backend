@@ -9,7 +9,10 @@ import {
     isEnrolledParent,
     canViewClassroomAggregates,
     canViewClassroomTranscripts,
+    canRecordInClassroom,
+    resolveClassroomRecordingTeacherId,
 } from "../../lib/permissions.js";
+import CoachClassroomGrant from "../../models/CoachClassroomGrant.js";
 
 const LEAD_ID = "64b000000000000000000001";
 const ASSISTANT_ID = "64b000000000000000000002";
@@ -51,10 +54,10 @@ describe("capability matrix", () => {
         }
     });
 
-    test("classroom recording upload is teacher-only (admin removed, coach never)", () => {
+    test("classroom recording upload is teacher or coach (admin and parent never)", () => {
         assert.ok(roleHasCapability("teacher", "uploadClassroomRecording"));
+        assert.ok(roleHasCapability("coach", "uploadClassroomRecording"));
         assert.ok(!roleHasCapability("admin", "uploadClassroomRecording"));
-        assert.ok(!roleHasCapability("coach", "uploadClassroomRecording"));
         assert.ok(!roleHasCapability("parent", "uploadClassroomRecording"));
     });
 
@@ -180,5 +183,88 @@ describe("classroom view policy (non-coach paths, no DB)", () => {
     test("missing user or classroom is denied", async () => {
         assert.ok(!(await canViewClassroomAggregates(null, classroom)));
         assert.ok(!(await canViewClassroomAggregates({ id: COACH_ID, role: "admin" }, null)));
+    });
+});
+
+function mockGrantFindOne(t, result) {
+    t.mock.method(CoachClassroomGrant, "findOne", (query) => ({
+        lean: async () => {
+            if (result && query.status && query.status !== result.status) return null;
+            return result;
+        },
+    }));
+}
+
+describe("canRecordInClassroom", () => {
+    test("lead and assistant teachers can record", async () => {
+        assert.ok(await canRecordInClassroom({ id: LEAD_ID, role: "teacher" }, classroom));
+        assert.ok(await canRecordInClassroom({ id: ASSISTANT_ID, role: "teacher" }, classroom));
+    });
+
+    test("outsider teacher, admin, and parent cannot record", async () => {
+        assert.ok(!(await canRecordInClassroom({ id: OUTSIDER_ID, role: "teacher" }, classroom)));
+        assert.ok(!(await canRecordInClassroom({ id: OUTSIDER_ID, role: "admin" }, classroom)));
+        assert.ok(!(await canRecordInClassroom({ id: PARENT_ID, role: "parent" }, classroom)));
+    });
+
+    test("missing user or classroom is denied", async () => {
+        assert.ok(!(await canRecordInClassroom(null, classroom)));
+        assert.ok(!(await canRecordInClassroom({ id: LEAD_ID, role: "teacher" }, null)));
+    });
+
+    test("coach with active grant can record", async (t) => {
+        mockGrantFindOne(t, { status: "active", transcriptAccess: false });
+        assert.ok(await canRecordInClassroom({ id: COACH_ID, role: "coach" }, classroom));
+    });
+
+    test("coach with pending grant cannot record", async (t) => {
+        mockGrantFindOne(t, { status: "pending", transcriptAccess: false });
+        assert.ok(!(await canRecordInClassroom({ id: COACH_ID, role: "coach" }, classroom)));
+    });
+
+    test("coach with revoked grant cannot record", async (t) => {
+        mockGrantFindOne(t, { status: "revoked", transcriptAccess: false });
+        assert.ok(!(await canRecordInClassroom({ id: COACH_ID, role: "coach" }, classroom)));
+    });
+
+    test("coach with no grant cannot record", async (t) => {
+        mockGrantFindOne(t, null);
+        assert.ok(!(await canRecordInClassroom({ id: COACH_ID, role: "coach" }, classroom)));
+    });
+});
+
+describe("resolveClassroomRecordingTeacherId", () => {
+    test("teacher uses their own id", () => {
+        assert.equal(
+            resolveClassroomRecordingTeacherId({ id: LEAD_ID, role: "teacher" }, classroom),
+            LEAD_ID
+        );
+    });
+
+    test("coach uses the classroom lead", () => {
+        assert.equal(
+            resolveClassroomRecordingTeacherId({ id: COACH_ID, role: "coach" }, classroom),
+            LEAD_ID
+        );
+    });
+
+    test("coach falls back to assistant when lead is empty", () => {
+        assert.equal(
+            resolveClassroomRecordingTeacherId(
+                { id: COACH_ID, role: "coach" },
+                { ...classroom, teacher: null }
+            ),
+            ASSISTANT_ID
+        );
+    });
+
+    test("coach returns null when both slots are empty", () => {
+        assert.equal(
+            resolveClassroomRecordingTeacherId(
+                { id: COACH_ID, role: "coach" },
+                { ...classroom, teacher: null, assistantTeacher: null }
+            ),
+            null
+        );
     });
 });

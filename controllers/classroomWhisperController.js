@@ -6,8 +6,11 @@ import ragClassifier from "../lib/ragClassifier.js";
 import { analyzeTranscript, extractKeywordSegments, computeCategoryWordCountFromSegments, deriveCategoryWordCountFromKeywordCounts } from "../lib/transcriptProcessor.js";
 import { redactPii } from "../lib/piiRedaction.js";
 import Classroom from "../models/Classroom.js";
-import { canManageClassroom } from "../lib/classroomHelpers.js";
-import { roleHasCapability } from "../lib/permissions.js";
+import {
+    roleHasCapability,
+    canRecordInClassroom,
+    resolveClassroomRecordingTeacherId,
+} from "../lib/permissions.js";
 import { isPredefinedActivity, validateCustomActivity } from "../lib/activityValidator.js";
 import { resolveValidatedLocation } from "../lib/locationValidator.js";
 import { logActivity } from "../lib/activityLogService.js";
@@ -48,8 +51,12 @@ const classroomWhisperController = async (req, res) => {
         }
         const finalLocation = locationResult.location;
 
-        // Classroom-scoped uploads: authorize via the shared classroom gate so
-        // the assistant teacher can record too. Absent classroomId = legacy flow.
+        if (!roleHasCapability(user.role, "uploadClassroomRecording")) {
+            return res.status(403).json({ message: "You do not have permission to upload classroom recordings" });
+        }
+
+        // Classroom-scoped uploads: teachers who manage the room, or coaches
+        // with an active grant. Absent classroomId = legacy teacher flow.
         let classroomDoc = null;
         if (classroomId) {
             if (!mongoose.Types.ObjectId.isValid(classroomId)) {
@@ -59,18 +66,20 @@ const classroomWhisperController = async (req, res) => {
             if (!classroomDoc) {
                 return res.status(404).json({ message: "Classroom not found" });
             }
-            if (!canManageClassroom(user, classroomDoc)) {
-                return res.status(403).json({ message: "You do not have access to this classroom" });
+            if (!(await canRecordInClassroom(user, classroomDoc))) {
+                return res.status(403).json({ message: "You do not have access to record in this classroom" });
             }
+        } else if (user.role === "coach") {
+            return res.status(400).json({ message: "Classroom is required" });
         }
 
-        // Only teachers create classroom recordings. Admin upload was removed
-        // (add-coach-role change); coaches never had it. Pre-existing
-        // admin-uploaded recordings remain readable.
-        if (!roleHasCapability(user.role, "uploadClassroomRecording")) {
-            return res.status(403).json({ message: "Only classroom teachers can upload classroom recordings" });
+        let teacherId = user.id;
+        if (user.role === "coach") {
+            teacherId = resolveClassroomRecordingTeacherId(user, classroomDoc);
+            if (!teacherId) {
+                return res.status(400).json({ message: "This classroom has no lead or assistant teacher to attribute the recording to" });
+            }
         }
-        const teacherId = user.id;
 
         if (!req.file) {
             return res.status(400).json({
