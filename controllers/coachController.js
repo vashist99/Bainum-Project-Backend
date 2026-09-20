@@ -26,27 +26,9 @@ async function classroomsInCoachScope(coachId) {
 }
 
 /**
- * Revoke a coach's grants that are no longer qualified by any assigned
- * teacher. Called after unassignment/reassignment.
+ * Eligibility is computed on read. Unassign must not mark grants revoked
+ * or a later reassignment would stay off. Sync only upserts missing actives.
  */
-async function revokeUnqualifiedGrants(coachId) {
-    const { classrooms } = await classroomsInCoachScope(coachId);
-    const inScopeIds = new Set(classrooms.map((c) => String(c._id)));
-    const grants = await CoachClassroomGrant.find({
-        coachId,
-        status: { $in: ["pending", "active"] },
-    });
-    const revoked = [];
-    for (const grant of grants) {
-        if (!inScopeIds.has(String(grant.classroomId))) {
-            grant.status = "revoked";
-            grant.transcriptAccess = false;
-            await grant.save();
-            revoked.push(grant);
-        }
-    }
-    return revoked;
-}
 
 /** GET /api/coaches — admin list with assignment + grant summaries. */
 export const listCoaches = async (req, res) => {
@@ -118,9 +100,8 @@ export const assignTeacherToCoach = async (req, res) => {
         teacher.coachId = coach._id;
         await teacher.save();
 
-        if (previousCoachId) {
-            await revokeUnqualifiedGrants(previousCoachId);
-        }
+        const { syncViewerEligibility } = await import("../lib/viewerAccessService.js");
+        await syncViewerEligibility({ teacherId });
 
         res.status(200).json({ message: "Teacher assigned", changed: true });
     } catch (error) {
@@ -145,19 +126,10 @@ export const unassignTeacherFromCoach = async (req, res) => {
         teacher.coachId = null;
         await teacher.save();
 
-        const revoked = await revokeUnqualifiedGrants(coachId);
-        for (const grant of revoked) {
-            const classroom = await Classroom.findById(grant.classroomId).select("name");
-            await createCoachGrantNotification({
-                recipientId: coachId,
-                recipientRole: "coach",
-                type: "coach-access-revoked",
-                classroom,
-                message: `Your access to classroom "${classroom?.name ?? ""}" was revoked (teacher unassigned)`,
-            });
-        }
+        const { syncViewerEligibility } = await import("../lib/viewerAccessService.js");
+        await syncViewerEligibility({ teacherId });
 
-        res.status(200).json({ message: "Teacher unassigned", revokedGrants: revoked.length });
+        res.status(200).json({ message: "Teacher unassigned", revokedGrants: 0 });
     } catch (error) {
         console.error("Error unassigning teacher from coach:", error);
         res.status(500).json({ message: error.message || "Internal server error" });

@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import HomeViewGrant from "../models/HomeViewGrant.js";
 import Classroom from "../models/Classroom.js";
-import { Parent, Teacher, Admin, Child } from "../models/User.js";
+import { Parent, Teacher, Admin, Child, Coach } from "../models/User.js";
 import { parentMayAccessChild } from "../lib/parentChildHelpers.js";
 import {
     teacherMayAccessChild,
@@ -25,9 +25,9 @@ async function loadVerifiedParent(user, childId) {
 }
 
 async function granteeNameOf(granteeId, granteeRole) {
-    const Model = granteeRole === "admin" ? Admin : Teacher;
+    const Model = granteeRole === "admin" ? Admin : granteeRole === "coach" ? Coach : Teacher;
     const doc = await Model.findById(granteeId).select("name").lean();
-    return doc?.name || (granteeRole === "admin" ? "An admin" : "A teacher");
+    return doc?.name || (granteeRole === "admin" ? "An admin" : granteeRole === "coach" ? "A coach" : "A teacher");
 }
 
 /**
@@ -54,23 +54,16 @@ export const getHomeAccessState = async (req, res) => {
             return res.status(400).json({ message: "Invalid child id" });
         }
 
-        if (user.role === "teacher" || user.role === "admin") {
-            const grants = await HomeViewGrant.find({
-                childId,
-                $or: [{ scope: "all-staff" }, { scope: "user", granteeId: user.id }],
-            }).lean();
-            const allStaffGrant = grants.find((g) => g.scope === "all-staff");
-            const allStaffActive = allStaffGrant?.status === "active";
-            const own = grants.find((g) => g.scope === "user");
-            let status = "none";
-            if (allStaffActive || own?.status === "active") status = "granted";
-            else if (own?.status === "pending") status = "pending";
-            // Effective transcript tier: any covering ACTIVE grant with the
-            // admin-set flag.
-            const transcriptAccess =
-                (allStaffActive && !!allStaffGrant.transcriptAccess) ||
-                (own?.status === "active" && !!own.transcriptAccess);
-            const payload = { status, transcriptAccess };
+        if (user.role === "teacher" || user.role === "admin" || user.role === "coach") {
+            const { canViewerSeeHomeCharts, canViewerSeeHomeTranscripts } = await import(
+                "../lib/viewerAccessService.js"
+            );
+            const charts = await canViewerSeeHomeCharts(user, childId);
+            const transcriptAccess = charts && (await canViewerSeeHomeTranscripts(user, childId));
+            const payload = {
+                status: charts ? "granted" : "none",
+                transcriptAccess: !!transcriptAccess,
+            };
 
             // Admins manage the transcript tier: include the child's active
             // grants so the management panel needs no extra endpoint.

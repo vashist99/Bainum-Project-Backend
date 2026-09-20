@@ -8,9 +8,10 @@ import {
 } from "../../lib/talkDataAccess.js";
 
 describe("talkDataAccess — home talk privacy helpers", () => {
-    test("teachers and admins are staff; parents are not", () => {
+    test("teachers, admins, and coaches are staff; parents are not", () => {
         assert.equal(isStaffRole("teacher"), true);
         assert.equal(isStaffRole("admin"), true);
+        assert.equal(isStaffRole("coach"), true);
         assert.equal(isStaffRole("parent"), false);
         assert.equal(isStaffRole(undefined), false);
     });

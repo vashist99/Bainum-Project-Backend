@@ -6,13 +6,10 @@ import {
     assignTeacherToCoach,
     unassignTeacherFromCoach,
     getCoachOverview,
-    requestClassroomAccess,
-    approveGrant,
-    denyGrant,
     revokeGrant,
     setTranscriptAccess,
-    pendingGrantsForTeacher,
 } from '../controllers/coachController.js';
+import { goneRequestFlow } from '../controllers/viewerAccessController.js';
 
 const router = express.Router();
 
@@ -25,10 +22,10 @@ router.delete('/:coachId/teachers/:teacherId', authenticateToken, requireCapabil
 router.get('/me/overview', authenticateToken, requireRole('coach'), getCoachOverview);
 
 // Grant lifecycle
-router.post('/grants/request', authenticateToken, requireCapability('requestCoachClassroomAccess'), requestClassroomAccess);
-router.get('/grants/pending-for-teacher', authenticateToken, requireRole('teacher'), pendingGrantsForTeacher);
-router.patch('/grants/:grantId/approve', authenticateToken, requireCapability('approveCoachAggregateAccess'), approveGrant);
-router.patch('/grants/:grantId/deny', authenticateToken, requireCapability('approveCoachAggregateAccess'), denyGrant);
+router.post('/grants/request', authenticateToken, goneRequestFlow);
+router.get('/grants/pending-for-teacher', authenticateToken, goneRequestFlow);
+router.patch('/grants/:grantId/approve', authenticateToken, goneRequestFlow);
+router.patch('/grants/:grantId/deny', authenticateToken, goneRequestFlow);
 router.patch('/grants/:grantId/revoke', authenticateToken, requireCapability('approveCoachAggregateAccess'), revokeGrant);
 router.patch('/grants/:grantId/transcript-access', authenticateToken, requireCapability('grantCoachTranscriptAccess'), setTranscriptAccess);
 

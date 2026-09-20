@@ -70,6 +70,7 @@ describe("staffHasHomeTranscriptAccess", () => {
     const teacher = { id: TEACHER_ID, role: "teacher" };
 
     test("query requires an ACTIVE covering grant WITH transcriptAccess", async (t) => {
+        t.mock.method(HomeViewGrant, "findOne", () => ({ lean: async () => null }));
         let captured = null;
         t.mock.method(HomeViewGrant, "exists", async (query) => {
             captured = query;
@@ -85,7 +86,10 @@ describe("staffHasHomeTranscriptAccess", () => {
     });
 
     test("false when no flagged grant exists (aggregate tier only)", async (t) => {
-        t.mock.method(HomeViewGrant, "exists", async () => null);
+        t.mock.method(HomeViewGrant, "findOne", () => ({ lean: async () => null }));
+        t.mock.method(HomeViewGrant, "exists", async (query) =>
+            query.transcriptAccess === true ? null : { _id: "g1" }
+        );
         assert.equal(await staffHasHomeTranscriptAccess(teacher, CHILD_ID), false);
     });
 

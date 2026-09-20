@@ -11,10 +11,9 @@ import mongoose from "mongoose";
  *   reassignment does NOT transfer access.
  * - scope "all-staff": every teacher and admin (granteeId absent).
  *
- * Staff "request access" creates the same document with status
- * "pending"; parent approval flips it to "active". Grants are NEVER
- * auto-created by invitation/classroom flows — only via the
- * /api/home-access endpoints.
+ * Classroom contact auto-opens charts for eligible teachers/coaches
+ * unless the parent has revoked the row. initiatedBy "system" marks
+ * those auto grants. Transcripts stay admin-gated.
  */
 const homeViewGrantSchema = new mongoose.Schema(
     {
@@ -38,7 +37,7 @@ const homeViewGrantSchema = new mongoose.Schema(
         },
         granteeRole: {
             type: String,
-            enum: ["teacher", "admin"],
+            enum: ["teacher", "admin", "coach"],
             default: null,
             required: function requiredForUserScope() {
                 return this.scope === "user";
@@ -58,7 +57,7 @@ const homeViewGrantSchema = new mongoose.Schema(
         },
         initiatedBy: {
             type: String,
-            enum: ["parent", "staff"],
+            enum: ["parent", "staff", "system"],
             required: true,
         },
         /**

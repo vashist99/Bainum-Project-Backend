@@ -573,6 +573,14 @@ export const registerTeacher = async (req, res) => {
         invitation.acceptedAt = new Date();
         await invitation.save();
 
+        if (teacher.coachId) {
+            void import("../lib/viewerAccessService.js")
+                .then(({ syncViewerEligibility }) =>
+                    syncViewerEligibility({ teacherId: teacher._id })
+                )
+                .catch((err) => console.error("[teacher register] syncViewerEligibility:", err.message));
+        }
+
         res.status(201).json({
             message: "Teacher account created successfully",
             user: token,

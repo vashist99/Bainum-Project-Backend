@@ -13,6 +13,8 @@ import {
     resolveClassroomRecordingTeacherId,
 } from "../../lib/permissions.js";
 import CoachClassroomGrant from "../../models/CoachClassroomGrant.js";
+import ParentClassroomGrant from "../../models/ParentClassroomGrant.js";
+import { Teacher } from "../../models/User.js";
 
 const LEAD_ID = "64b000000000000000000001";
 const ASSISTANT_ID = "64b000000000000000000002";
@@ -178,10 +180,18 @@ describe("classroom view policy (non-coach paths, no DB)", () => {
         }
     });
 
-    test("enrolled parent gets both tiers", async () => {
+    test("enrolled parent gets both tiers unless revoked", async (t) => {
+        t.mock.method(ParentClassroomGrant, "findOne", () => ({ lean: async () => null }));
         const parent = { id: PARENT_ID, role: "parent" };
         assert.ok(await canViewClassroomAggregates(parent, classroom));
         assert.ok(await canViewClassroomTranscripts(parent, classroom));
+    });
+
+    test("lead revoke hides parent classroom charts and transcripts", async (t) => {
+        t.mock.method(ParentClassroomGrant, "findOne", () => ({ lean: async () => ({ status: "revoked" }) }));
+        const parent = { id: PARENT_ID, role: "parent" };
+        assert.ok(!(await canViewClassroomAggregates(parent, classroom)));
+        assert.ok(!(await canViewClassroomTranscripts(parent, classroom)));
     });
 
     test("outsider teacher and non-member parent are denied", async () => {
@@ -195,11 +205,21 @@ describe("classroom view policy (non-coach paths, no DB)", () => {
     });
 });
 
-function mockGrantFindOne(t, result) {
-    t.mock.method(CoachClassroomGrant, "findOne", (query) => ({
-        lean: async () => {
-            if (result && query.status && query.status !== result.status) return null;
-            return result;
+function mockCoachEligibility(t, { eligible = true, grant = null } = {}) {
+    t.mock.method(Teacher, "find", () => ({
+        select() {
+            return this;
+        },
+        lean: async () =>
+            eligible ? [{ _id: LEAD_ID, coachId: COACH_ID }] : [{ _id: LEAD_ID, coachId: null }],
+    }));
+    t.mock.method(CoachClassroomGrant, "findOne", async () => grant);
+    t.mock.method(CoachClassroomGrant, "create", async (doc) => ({
+        ...doc,
+        status: "active",
+        transcriptAccess: false,
+        save: async function save() {
+            return this;
         },
     }));
 }
@@ -221,23 +241,33 @@ describe("canRecordInClassroom", () => {
         assert.ok(!(await canRecordInClassroom({ id: LEAD_ID, role: "teacher" }, null)));
     });
 
-    test("coach with active grant can record", async (t) => {
-        mockGrantFindOne(t, { status: "active", transcriptAccess: false });
+    test("eligible coach can record without a prior grant", async (t) => {
+        mockCoachEligibility(t, { eligible: true, grant: null });
         assert.ok(await canRecordInClassroom({ id: COACH_ID, role: "coach" }, classroom));
     });
 
-    test("coach with pending grant cannot record", async (t) => {
-        mockGrantFindOne(t, { status: "pending", transcriptAccess: false });
-        assert.ok(!(await canRecordInClassroom({ id: COACH_ID, role: "coach" }, classroom)));
+    test("eligible coach with a pending grant can record (pending activates)", async (t) => {
+        const grant = {
+            status: "pending",
+            transcriptAccess: false,
+            async save() {
+                this.status = "active";
+            },
+        };
+        mockCoachEligibility(t, { eligible: true, grant });
+        assert.ok(await canRecordInClassroom({ id: COACH_ID, role: "coach" }, classroom));
     });
 
     test("coach with revoked grant cannot record", async (t) => {
-        mockGrantFindOne(t, { status: "revoked", transcriptAccess: false });
+        mockCoachEligibility(t, {
+            eligible: true,
+            grant: { status: "revoked", transcriptAccess: false },
+        });
         assert.ok(!(await canRecordInClassroom({ id: COACH_ID, role: "coach" }, classroom)));
     });
 
-    test("coach with no grant cannot record", async (t) => {
-        mockGrantFindOne(t, null);
+    test("ineligible coach cannot record even with no revoke row", async (t) => {
+        mockCoachEligibility(t, { eligible: false, grant: null });
         assert.ok(!(await canRecordInClassroom({ id: COACH_ID, role: "coach" }, classroom)));
     });
 });

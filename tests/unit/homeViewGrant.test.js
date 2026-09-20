@@ -67,6 +67,7 @@ describe("staffHasHomeViewAccess", () => {
     const admin = { id: "64b000000000000000000009", role: "admin" };
 
     test("true when an active all-staff grant exists", async (t) => {
+        t.mock.method(HomeViewGrant, "findOne", () => ({ lean: async () => null }));
         t.mock.method(HomeViewGrant, "exists", async (query) => {
             assert.equal(query.status, "active");
             return { _id: new mongoose.Types.ObjectId() };
@@ -76,11 +77,18 @@ describe("staffHasHomeViewAccess", () => {
     });
 
     test("query matches all-staff OR the caller's own user grant", async (t) => {
+        t.mock.method(HomeViewGrant, "findOne", () => ({ lean: async () => null }));
         let captured = null;
         t.mock.method(HomeViewGrant, "exists", async (query) => {
             captured = query;
             return null;
         });
+        const { Child } = await import("../../models/User.js");
+        t.mock.method(Child, "findById", () => ({
+            select() {
+                return { lean: async () => null };
+            },
+        }));
         await staffHasHomeViewAccess(teacher, CHILD_ID);
         assert.equal(captured.childId, CHILD_ID);
         assert.equal(captured.status, "active");
@@ -90,8 +98,15 @@ describe("staffHasHomeViewAccess", () => {
         ]);
     });
 
-    test("false when no active grant matches (pending/revoked excluded by query)", async (t) => {
+    test("false when no active grant matches and the teacher is not eligible", async (t) => {
+        t.mock.method(HomeViewGrant, "findOne", () => ({ lean: async () => null }));
         t.mock.method(HomeViewGrant, "exists", async () => null);
+        const { Child } = await import("../../models/User.js");
+        t.mock.method(Child, "findById", () => ({
+            select() {
+                return { lean: async () => null };
+            },
+        }));
         assert.equal(await staffHasHomeViewAccess(teacher, CHILD_ID), false);
     });
 
@@ -123,13 +138,21 @@ describe("homeTalkFilterForRequest — grant-aware home-only filter", () => {
         assert.equal(exists.mock.callCount(), 0);
     });
 
-    test("ungranted staff get null (no home talk data may be served)", async (t) => {
+    test("ungranted teacher gets null; admin always gets the home-only filter", async (t) => {
+        t.mock.method(HomeViewGrant, "findOne", () => ({ lean: async () => null }));
         t.mock.method(HomeViewGrant, "exists", async () => null);
+        const { Child } = await import("../../models/User.js");
+        t.mock.method(Child, "findById", () => ({
+            select() {
+                return { lean: async () => null };
+            },
+        }));
         assert.equal(await homeTalkFilterForRequest(teacher, CHILD_ID), null);
-        assert.equal(await homeTalkFilterForRequest(admin, CHILD_ID), null);
+        assert.deepEqual(await homeTalkFilterForRequest(admin, CHILD_ID), homeOnlyContextFilter());
     });
 
     test("granted staff get the home-only filter", async (t) => {
+        t.mock.method(HomeViewGrant, "findOne", () => ({ lean: async () => null }));
         t.mock.method(HomeViewGrant, "exists", async () => ({
             _id: new mongoose.Types.ObjectId(),
         }));

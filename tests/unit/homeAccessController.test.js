@@ -56,9 +56,10 @@ function mockVerifiedParent(t) {
 describe("homeAccessController — getHomeAccessState (staff)", () => {
     const teacherReq = { params: { childId: CHILD_ID }, user: { id: TEACHER_ID, role: "teacher" } };
 
-    test("granted via active all-staff grant", async (t) => {
-        t.mock.method(HomeViewGrant, "find", () =>
-            leanQuery([{ scope: "all-staff", status: "active" }])
+    test("granted via active covering grant", async (t) => {
+        t.mock.method(HomeViewGrant, "findOne", () => ({ lean: async () => null }));
+        t.mock.method(HomeViewGrant, "exists", async (query) =>
+            query.transcriptAccess === true ? null : { _id: "g1" }
         );
         const res = mockRes();
         await getHomeAccessState(teacherReq, res);
@@ -66,31 +67,30 @@ describe("homeAccessController — getHomeAccessState (staff)", () => {
         assert.deepEqual(res.body, { status: "granted", transcriptAccess: false });
     });
 
-    test("granted via own active user grant", async (t) => {
-        t.mock.method(HomeViewGrant, "find", () =>
-            leanQuery([{ scope: "user", granteeId: TEACHER_ID, status: "active" }])
-        );
+    test("admin always reports granted charts and transcripts", async (t) => {
+        t.mock.method(HomeViewGrant, "find", () => leanQuery([]));
         const res = mockRes();
-        await getHomeAccessState(teacherReq, res);
-        assert.deepEqual(res.body, { status: "granted", transcriptAccess: false });
+        await getHomeAccessState(
+            { params: { childId: CHILD_ID }, user: { id: ADMIN_ID, role: "admin" } },
+            res
+        );
+        assert.equal(res.statusCode, 200);
+        assert.equal(res.body.status, "granted");
+        assert.equal(res.body.transcriptAccess, true);
+        assert.deepEqual(res.body.grants, []);
     });
 
-    test("pending own request reports pending", async (t) => {
-        t.mock.method(HomeViewGrant, "find", () =>
-            leanQuery([{ scope: "user", granteeId: TEACHER_ID, status: "pending" }])
-        );
+    test("revoked grant reports none", async (t) => {
+        t.mock.method(HomeViewGrant, "findOne", () => ({ lean: async () => ({ status: "revoked" }) }));
         const res = mockRes();
         await getHomeAccessState(teacherReq, res);
-        assert.deepEqual(res.body, { status: "pending", transcriptAccess: false });
+        assert.deepEqual(res.body, { status: "none", transcriptAccess: false });
     });
 
-    test("revoked or absent grants report none", async (t) => {
-        t.mock.method(HomeViewGrant, "find", () =>
-            leanQuery([
-                { scope: "all-staff", status: "revoked" },
-                { scope: "user", granteeId: TEACHER_ID, status: "revoked" },
-            ])
-        );
+    test("ineligible teacher without a grant reports none", async (t) => {
+        t.mock.method(HomeViewGrant, "findOne", () => ({ lean: async () => null }));
+        t.mock.method(HomeViewGrant, "exists", async () => null);
+        t.mock.method(Child, "findById", () => selectLeanQuery(null));
         const res = mockRes();
         await getHomeAccessState(teacherReq, res);
         assert.deepEqual(res.body, { status: "none", transcriptAccess: false });

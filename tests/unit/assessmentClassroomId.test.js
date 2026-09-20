@@ -38,6 +38,14 @@ describe("TeacherAssessment.classroomId", () => {
         assert.equal(doc.classroomId, undefined);
     });
 
+    test("schema declares observation note, hidden, and recordedById", () => {
+        for (const Model of [Assessment, TeacherAssessment]) {
+            assert.ok(Model.schema.paths["observationNote.text"]);
+            assert.ok(Model.schema.paths.hidden);
+            assert.ok(Model.schema.paths.recordedById);
+        }
+    });
+
     test("instantiating with classroomId stores the ObjectId", () => {
         const doc = new TeacherAssessment({
             teacherId: DUMMY_TEACHER,

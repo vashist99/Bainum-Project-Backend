@@ -119,6 +119,7 @@ export async function acceptTeacherAssessment(req, res) {
             durationSeconds: durationSeconds ?? null,
             wordsPerMinute: wordsPerMinute ?? null,
             categoryWPM: safeCategoryWPM,
+            recordedById: req.user?.id || null,
         });
 
         await assessment.save();

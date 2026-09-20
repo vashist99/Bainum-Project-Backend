@@ -20,6 +20,11 @@ import {
 import { readSchoolFromBody, withSchoolField } from "../lib/schoolFieldAlias.js";
 import { materializeAndSyncClassroomChildren } from "../lib/classroomMembershipSync.js";
 import { logActivity } from "../lib/activityLogService.js";
+import {
+    hiddenObservationMongoFilter,
+    andQuery,
+    serializeObservationMeta,
+} from "../lib/observationVisibility.js";
 
 /**
  * Build the summary projection used by every classroom response. The
@@ -133,6 +138,9 @@ export const createClassroom = async (req, res) => {
             classroom,
             recipients: teacherRecipients,
         });
+        void import("../lib/viewerAccessService.js")
+            .then(({ syncViewerEligibility }) => syncViewerEligibility({ classroomId: classroom._id }))
+            .catch((err) => console.error("[classroom create] syncViewerEligibility:", err.message));
 
         // Activity log — only rows for teachers/coaches; admin creates are dropped.
         void logActivity({
@@ -240,27 +248,18 @@ async function findAuthorizedClassroom(req, res) {
     if (canManageClassroom(req.user, classroom)) {
         return { classroom, mode: "manage" };
     }
-    // Parent read-only: must be a parent role AND a member of the classroom.
-    if (req.user?.role === "parent") {
-        const uid = String(req.user.id ?? "");
-        const isMember = (classroom.parents || []).some(
-            (p) => String(p._id ?? p) === uid
+    if (req.user?.role === "parent" || req.user?.role === "coach") {
+        const { canViewClassroomAggregates, canViewClassroomTranscripts } = await import(
+            "../lib/permissions.js"
         );
-        if (isMember) return { classroom, mode: "read" };
-    }
-    // Coach read-only: needs an ACTIVE grant for this classroom.
-    if (req.user?.role === "coach") {
-        const { default: CoachClassroomGrant } = await import("../models/CoachClassroomGrant.js");
-        const grant = await CoachClassroomGrant.findOne({
-            coachId: req.user.id,
-            classroomId: classroom._id,
-            status: "active",
-        }).lean();
-        if (grant) {
+        if (await canViewClassroomAggregates(req.user, classroom)) {
             return {
                 classroom,
-                mode: "coach",
-                coachTranscriptAccess: !!grant.transcriptAccess,
+                mode: req.user.role === "coach" ? "coach" : "read",
+                coachTranscriptAccess:
+                    req.user.role === "coach"
+                        ? await canViewClassroomTranscripts(req.user, classroom)
+                        : undefined,
             };
         }
     }
@@ -506,6 +505,9 @@ export const inviteParents = async (req, res) => {
             classroom,
             recipients: [...parentRecipients, ...teacherRecipients],
         });
+        void import("../lib/viewerAccessService.js")
+            .then(({ syncViewerEligibility }) => syncViewerEligibility({ classroomId: classroom._id }))
+            .catch((err) => console.error("[classroom invite] syncViewerEligibility:", err.message));
 
         if (addedParents.length > 0) {
             void logActivity({
@@ -816,10 +818,13 @@ export const getClassroomTranscripts = async (req, res) => {
                   ],
               };
 
-        const teacherAssessments = await TeacherAssessment.find({
-            classroomId: classroom._id,
-            ...visibilityFilter,
-        })
+        const teacherAssessments = await TeacherAssessment.find(
+            andQuery(
+                { classroomId: classroom._id },
+                visibilityFilter,
+                hiddenObservationMongoFilter(req.user),
+            )
+        )
             .populate("teacherId", "name")
             .lean();
 
@@ -845,6 +850,7 @@ export const getClassroomTranscripts = async (req, res) => {
                 keywordCounts: a.keywordCounts,
                 ragSegments: a.ragSegments,
                 classificationMethod: a.classificationMethod,
+                ...serializeObservationMeta(req.user, a),
             }))
             .sort((a, b) => {
                 const idA = a._id != null ? String(a._id) : "";
@@ -879,9 +885,12 @@ export const getClassroomAssessments = async (req, res) => {
         // fan-out copies), so charts are computed from the classroom's own
         // rows. Every authorized viewer — including enrolled parents in
         // read mode — sees the same classroom-level aggregates.
-        const assessments = await TeacherAssessment.find({
-            classroomId: classroom._id,
-        })
+        const assessments = await TeacherAssessment.find(
+            andQuery(
+                { classroomId: classroom._id },
+                hiddenObservationMongoFilter(req.user),
+            )
+        )
             .select("teacherId date categoryWPM wordsPerMinute classroomId")
             .sort({ date: 1 })
             .lean();

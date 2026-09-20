@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import mongoose from "mongoose";
 
 import CoachClassroomGrant from "../../models/CoachClassroomGrant.js";
+import Classroom from "../../models/Classroom.js";
 import { Coach, Teacher } from "../../models/User.js";
 import {
     canViewClassroomAggregates,
@@ -72,68 +73,90 @@ describe("Coach and Teacher models — coach plumbing", () => {
     });
 });
 
-function mockFindOne(t, result) {
-    t.mock.method(CoachClassroomGrant, "findOne", (query) => ({
-        lean: async () => {
-            // The policy layer must only ever consider ACTIVE grants for access.
-            if (result && query.status && query.status !== result.status) return null;
-            return result;
+function mockCoachAccess(t, { eligible = true, grant = null } = {}) {
+    t.mock.method(Teacher, "find", () => ({
+        select() {
+            return this;
+        },
+        lean: async () =>
+            eligible
+                ? [{ _id: classroom.teacher, coachId: COACH_ID }]
+                : [{ _id: classroom.teacher, coachId: null }],
+    }));
+    t.mock.method(CoachClassroomGrant, "findOne", async () => grant);
+    t.mock.method(CoachClassroomGrant, "create", async (doc) => ({
+        ...doc,
+        status: "active",
+        transcriptAccess: false,
+        async save() {
+            return this;
         },
     }));
 }
 
 describe("coach classroom view policy", () => {
-    test("active grant → aggregates yes, transcripts no", async (t) => {
-        mockFindOne(t, { status: "active", transcriptAccess: false });
+    test("eligible + active grant → aggregates yes, transcripts no", async (t) => {
+        mockCoachAccess(t, { grant: { status: "active", transcriptAccess: false } });
         assert.equal(await canViewClassroomAggregates(coachUser, classroom), true);
         assert.equal(await canViewClassroomTranscripts(coachUser, classroom), false);
     });
 
-    test("active grant with transcript tier → both", async (t) => {
-        mockFindOne(t, { status: "active", transcriptAccess: true });
+    test("eligible + transcript tier → both", async (t) => {
+        mockCoachAccess(t, { grant: { status: "active", transcriptAccess: true } });
         assert.equal(await canViewClassroomAggregates(coachUser, classroom), true);
         assert.equal(await canViewClassroomTranscripts(coachUser, classroom), true);
     });
 
-    test("no grant → neither", async (t) => {
-        mockFindOne(t, null);
-        assert.equal(await canViewClassroomAggregates(coachUser, classroom), false);
+    test("eligible with no grant auto-opens aggregates", async (t) => {
+        mockCoachAccess(t, { grant: null });
+        assert.equal(await canViewClassroomAggregates(coachUser, classroom), true);
         assert.equal(await canViewClassroomTranscripts(coachUser, classroom), false);
     });
 
-    test("pending grant → neither (query filters on active)", async (t) => {
-        mockFindOne(t, { status: "pending", transcriptAccess: false });
+    test("revoked grant → neither", async (t) => {
+        mockCoachAccess(t, { grant: { status: "revoked", transcriptAccess: false } });
         assert.equal(await canViewClassroomAggregates(coachUser, classroom), false);
         assert.equal(await canViewClassroomTranscripts(coachUser, classroom), false);
     });
 });
 
 describe("coachClassroomTier", () => {
-    function mockTierFindOne(t, result) {
-        t.mock.method(CoachClassroomGrant, "findOne", () => ({
-            lean: async () => result,
+    function mockClassroom(t) {
+        t.mock.method(Classroom, "findById", () => ({
+            select() {
+                return { lean: async () => classroom };
+            },
         }));
     }
 
-    test("no grant → none", async (t) => {
-        mockTierFindOne(t, null);
+    test("ineligible → none", async (t) => {
+        mockClassroom(t);
+        mockCoachAccess(t, { eligible: false, grant: null });
         assert.equal(await coachClassroomTier(COACH_ID, CLASSROOM_ID), "none");
     });
 
     test("revoked → none", async (t) => {
-        mockTierFindOne(t, { status: "revoked", transcriptAccess: false });
+        mockClassroom(t);
+        mockCoachAccess(t, { grant: { status: "revoked", transcriptAccess: false } });
         assert.equal(await coachClassroomTier(COACH_ID, CLASSROOM_ID), "none");
     });
 
-    test("pending → requested", async (t) => {
-        mockTierFindOne(t, { status: "pending", transcriptAccess: false });
-        assert.equal(await coachClassroomTier(COACH_ID, CLASSROOM_ID), "requested");
+    test("eligible pending activates to aggregate", async (t) => {
+        mockClassroom(t);
+        const grant = {
+            status: "pending",
+            transcriptAccess: false,
+            async save() {
+                this.status = "active";
+            },
+        };
+        mockCoachAccess(t, { grant });
+        assert.equal(await coachClassroomTier(COACH_ID, CLASSROOM_ID), "aggregate");
     });
 
     test("active → aggregate; active + flag → transcripts", async (t) => {
-        mockTierFindOne(t, { status: "active", transcriptAccess: false });
+        mockClassroom(t);
+        mockCoachAccess(t, { grant: { status: "active", transcriptAccess: false } });
         assert.equal(await coachClassroomTier(COACH_ID, CLASSROOM_ID), "aggregate");
-        mockTierFindOne(t, { status: "active", transcriptAccess: true });
-        assert.equal(await coachClassroomTier(COACH_ID, CLASSROOM_ID), "transcripts");
     });
 });

@@ -105,7 +105,15 @@ const assessmentSchema = new mongoose.Schema({
         social: { type: Number, default: null },
         literature: { type: Number, default: null },
         language: { type: Number, default: null }
-    }
+    },
+    observationNote: {
+        text: { type: String, default: "" },
+        authorName: { type: String, default: "" },
+        authorId: { type: mongoose.Schema.Types.ObjectId, default: null },
+        updatedAt: { type: Date, default: null },
+    },
+    hidden: { type: Boolean, default: false, index: true },
+    recordedById: { type: mongoose.Schema.Types.ObjectId, default: null, index: true },
 });
 
 const Assessment = mongoose.model("Assessment", assessmentSchema);

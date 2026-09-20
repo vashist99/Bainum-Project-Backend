@@ -34,6 +34,7 @@ const notificationSchema = new mongoose.Schema(
                 "coach-access-denied",
                 "coach-access-revoked",
                 "coach-transcript-access-changed",
+                "chart-access-changed",
             ],
             required: true,
         },

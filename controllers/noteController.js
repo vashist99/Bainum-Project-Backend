@@ -6,43 +6,10 @@ import {
     canReadClassroomNotes,
     canWriteClassroomNotes,
     loadClassroomForNoteAccess,
-    findParentsLinkedToChild,
 } from "../lib/noteAccessHelpers.js";
-import {
-    fanOutChildNoteAddedNotifications,
-    fanOutClassroomNoteAddedNotifications,
-} from "../lib/notificationService.js";
 
 function authorFromUser(user, bodyAuthor) {
     return bodyAuthor || user?.name || user?.email || "Unknown User";
-}
-
-async function notifyParentsForChildNote(user, childId) {
-    if (user?.role !== "admin" && user?.role !== "teacher") return;
-    try {
-        const { child, parents } = await findParentsLinkedToChild(childId);
-        if (!child || parents.length === 0) return;
-        await fanOutChildNoteAddedNotifications({
-            child,
-            parentIds: parents.map((p) => p._id),
-        });
-    } catch (error) {
-        console.error("[noteController] child note notification failed:", error.message);
-    }
-}
-
-async function notifyParentsForClassroomNote(user, classroom) {
-    if (user?.role !== "admin" && user?.role !== "teacher") return;
-    try {
-        const parentIds = (classroom.parents || []).map((p) => p._id ?? p);
-        if (parentIds.length === 0) return;
-        await fanOutClassroomNoteAddedNotifications({
-            classroom,
-            parentIds,
-        });
-    } catch (error) {
-        console.error("[noteController] classroom note notification failed:", error.message);
-    }
 }
 
 export const createNote = async (req, res) => {
@@ -81,13 +48,6 @@ export const createNote = async (req, res) => {
         });
 
         await note.save();
-
-        if (scope.childId) {
-            await notifyParentsForChildNote(user, scope.childId);
-        } else {
-            const classroom = await loadClassroomForNoteAccess(scope.classroomId);
-            if (classroom) await notifyParentsForClassroomNote(user, classroom);
-        }
 
         res.status(201).json({
             message: "Note created successfully",

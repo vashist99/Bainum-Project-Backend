@@ -37,6 +37,17 @@ import { roleHasCapability } from '../lib/permissions.js';
 import { transcriptExpiryFrom } from '../lib/transcriptRetention.js';
 import { redactTranscriptPayload } from '../lib/piiRedaction.js';
 import { acceptTeacherAssessment } from '../controllers/teacherAcceptController.js';
+import {
+    patchTeacherObservationNote,
+    patchTeacherObservationHidden,
+    patchChildObservationNote,
+    patchChildObservationHidden,
+} from '../controllers/observationController.js';
+import {
+    hiddenObservationMongoFilter,
+    andQuery,
+    withObservationFields,
+} from '../lib/observationVisibility.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -203,10 +214,12 @@ router.get('/assessments/child/:childId', authenticateToken, async (req, res) =>
             return res.status(200).json({ assessments: [] });
         }
 
-        const query = { childId: toObjectId(childId), ...homeFilter };
-        if (user.role === 'parent' || user.role === 'teacher') {
-            Object.assign(query, transcriptVisibilityFilter());
-        }
+        const query = andQuery(
+            { childId: toObjectId(childId) },
+            homeFilter,
+            user.role === 'parent' || user.role === 'teacher' ? transcriptVisibilityFilter() : {},
+            hiddenObservationMongoFilter(user),
+        );
 
         let assessments = await Assessment.find(query).sort({ _id: -1 });
 
@@ -220,7 +233,7 @@ router.get('/assessments/child/:childId', authenticateToken, async (req, res) =>
             assessments = assessments.map(stripHomeTranscriptFields);
         }
 
-        res.status(200).json({ assessments });
+        res.status(200).json({ assessments: withObservationFields(user, assessments) });
     } catch (error) {
         console.error("Error fetching assessments:", error);
         res.status(500).json({ message: error.message });
@@ -255,10 +268,12 @@ router.get('/assessments/child/:childId/latest', authenticateToken, async (req, 
             return res.status(404).json({ message: "No assessments found for this child" });
         }
 
-        const query = { childId: toObjectId(childId), ...homeFilter };
-        if (user.role === 'parent' || user.role === 'teacher') {
-            Object.assign(query, transcriptVisibilityFilter());
-        }
+        const query = andQuery(
+            { childId: toObjectId(childId) },
+            homeFilter,
+            user.role === 'parent' || user.role === 'teacher' ? transcriptVisibilityFilter() : {},
+            hiddenObservationMongoFilter(user),
+        );
 
         let assessment = await Assessment.findOne(query).sort({ date: -1 });
 
@@ -275,7 +290,8 @@ router.get('/assessments/child/:childId/latest', authenticateToken, async (req, 
             assessment = stripHomeTranscriptFields(assessment);
         }
 
-        res.status(200).json({ assessment });
+        const [withMeta] = withObservationFields(user, [assessment]);
+        res.status(200).json({ assessment: withMeta });
     } catch (error) {
         console.error("Error fetching latest assessment:", error);
         res.status(500).json({ message: error.message });
@@ -385,6 +401,7 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             activity: finalActivity,
             activityContext: expectedContext,
             location: locationResult.location,
+            recordedById: user.id || null,
         };
 
         // Parent home recordings: one Assessment per selected child.
@@ -423,6 +440,7 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
                 durationSeconds: base.durationSeconds,
                 wordsPerMinute: base.wordsPerMinute,
                 categoryWPM: base.categoryWPM,
+                recordedById: base.recordedById,
             });
             await teacherAssessment.save();
             teacherAssessmentRef = {
@@ -609,19 +627,24 @@ router.get('/assessments/teacher/:teacherId', authenticateToken, async (req, res
         const user = req.user;
 
         if (user.role === 'admin') {
-            const assessments = await TeacherAssessment.find({ teacherId }).sort({ date: -1 });
-            return res.status(200).json({ assessments });
+            const assessments = await TeacherAssessment.find(
+                andQuery({ teacherId }, hiddenObservationMongoFilter(user))
+            ).sort({ date: -1 });
+            return res.status(200).json({ assessments: withObservationFields(user, assessments) });
         }
 
         if (user.role === 'teacher') {
             if (String(user.id) !== String(teacherId)) {
                 return res.status(403).json({ message: "You can only access your own assessments" });
             }
-            const assessments = await TeacherAssessment.find({
-                teacherId: toObjectId(teacherId),
-                ...transcriptVisibilityFilter(),
-            }).sort({ date: -1 });
-            return res.status(200).json({ assessments });
+            const assessments = await TeacherAssessment.find(
+                andQuery(
+                    { teacherId: toObjectId(teacherId) },
+                    transcriptVisibilityFilter(),
+                    hiddenObservationMongoFilter(user),
+                )
+            ).sort({ date: -1 });
+            return res.status(200).json({ assessments: withObservationFields(user, assessments) });
         }
 
         if (user.role === 'parent') {
@@ -634,11 +657,14 @@ router.get('/assessments/teacher/:teacherId', authenticateToken, async (req, res
             if (!ok) {
                 return res.status(403).json({ message: "You do not have access to this teacher's assessments" });
             }
-            const assessments = await TeacherAssessment.find({
-                teacherId: toObjectId(teacherId),
-                ...transcriptVisibilityFilter(),
-            }).sort({ date: -1 });
-            return res.status(200).json({ assessments });
+            const assessments = await TeacherAssessment.find(
+                andQuery(
+                    { teacherId: toObjectId(teacherId) },
+                    transcriptVisibilityFilter(),
+                    hiddenObservationMongoFilter(user),
+                )
+            ).sort({ date: -1 });
+            return res.status(200).json({ assessments: withObservationFields(user, assessments) });
         }
 
         return res.status(403).json({ message: "Not allowed to access teacher transcripts" });
@@ -655,17 +681,22 @@ router.get('/assessments/teacher/:teacherId/latest', authenticateToken, async (r
         const { teacherId } = req.params;
         const user = req.user;
 
-        const buildTeacherTranscriptQuery = (tid) => ({
-            teacherId: toObjectId(tid),
-            ...transcriptVisibilityFilter(),
-        });
+        const buildTeacherTranscriptQuery = (tid) =>
+            andQuery(
+                { teacherId: toObjectId(tid) },
+                transcriptVisibilityFilter(),
+                hiddenObservationMongoFilter(user),
+            );
 
         if (user.role === 'admin') {
-            const assessment = await TeacherAssessment.findOne({ teacherId }).sort({ date: -1 });
+            const assessment = await TeacherAssessment.findOne(
+                andQuery({ teacherId }, hiddenObservationMongoFilter(user))
+            ).sort({ date: -1 });
             if (!assessment) {
                 return res.status(404).json({ message: "No assessments found for this teacher" });
             }
-            return res.status(200).json({ assessment });
+            const [adminMeta] = withObservationFields(user, [assessment]);
+            return res.status(200).json({ assessment: adminMeta });
         }
 
         if (user.role === 'teacher') {
@@ -676,7 +707,8 @@ router.get('/assessments/teacher/:teacherId/latest', authenticateToken, async (r
             if (!assessment) {
                 return res.status(404).json({ message: "No assessments found for this teacher" });
             }
-            return res.status(200).json({ assessment });
+            const [teacherMeta] = withObservationFields(user, [assessment]);
+            return res.status(200).json({ assessment: teacherMeta });
         }
 
         if (user.role === 'parent') {
@@ -693,7 +725,8 @@ router.get('/assessments/teacher/:teacherId/latest', authenticateToken, async (r
             if (!assessment) {
                 return res.status(404).json({ message: "No assessments found for this teacher" });
             }
-            return res.status(200).json({ assessment });
+            const [parentMeta] = withObservationFields(user, [assessment]);
+            return res.status(200).json({ assessment: parentMeta });
         }
 
         return res.status(403).json({ message: "Not allowed to access teacher transcripts" });
@@ -709,6 +742,11 @@ router.get('/assessments/teacher/:teacherId/latest', authenticateToken, async (r
 // homepage; child data pages show home talk only, so no per-child copies
 // are created.
 router.post('/assessments/teacher/accept', authenticateToken, acceptTeacherAssessment);
+
+router.patch('/assessments/teacher/:assessmentId/note', authenticateToken, patchTeacherObservationNote);
+router.patch('/assessments/teacher/:assessmentId/hidden', authenticateToken, patchTeacherObservationHidden);
+router.patch('/assessments/child/:assessmentId/note', authenticateToken, patchChildObservationNote);
+router.patch('/assessments/child/:assessmentId/hidden', authenticateToken, patchChildObservationHidden);
 
 // Route to delete a teacher assessment (recalculates cohort thresholds)
 router.delete('/assessments/teacher/:assessmentId', authenticateToken, async (req, res) => {

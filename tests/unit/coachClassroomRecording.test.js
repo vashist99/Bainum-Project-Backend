@@ -40,11 +40,21 @@ function mockRes() {
     };
 }
 
-function mockGrant(t, result) {
-    t.mock.method(CoachClassroomGrant, "findOne", (query) => ({
-        lean: async () => {
-            if (result && query.status && query.status !== result.status) return null;
-            return result;
+function mockGrant(t, result, { eligible = true } = {}) {
+    t.mock.method(Teacher, "find", () => ({
+        select() {
+            return this;
+        },
+        lean: async () =>
+            eligible ? [{ _id: LEAD_ID, coachId: COACH_ID }] : [{ _id: LEAD_ID, coachId: null }],
+    }));
+    t.mock.method(CoachClassroomGrant, "findOne", async () => result);
+    t.mock.method(CoachClassroomGrant, "create", async (doc) => ({
+        ...doc,
+        status: "active",
+        transcriptAccess: false,
+        async save() {
+            return this;
         },
     }));
 }
@@ -97,22 +107,25 @@ describe("classroom whisper — coach upload gate", () => {
         assert.match(res.body.message, /audio file/i);
     });
 
-    test("pending grant is 403 and does not persist", async (t) => {
+    test("pending grant activates and is authorized (400 audio required, not 403)", async (t) => {
         t.mock.method(Classroom, "findById", async () => classroomDoc);
-        mockGrant(t, { status: "pending", transcriptAccess: false });
-        const save = t.mock.method(TeacherAssessment.prototype, "save", async () => {
-            throw new Error("should not save");
-        });
+        const grant = {
+            status: "pending",
+            transcriptAccess: false,
+            async save() {
+                this.status = "active";
+            },
+        };
+        mockGrant(t, grant);
         const res = mockRes();
         await classroomWhisperController(
             {
                 ...coachReq({ classroomId: CLASSROOM_ID, activity: "Circle time", location: "Classroom" }),
-                file: { path: "x", filename: "x.webm", mimetype: "audio/webm" },
             },
             res
         );
-        assert.equal(res.statusCode, 403);
-        assert.equal(save.mock.callCount(), 0);
+        assert.equal(res.statusCode, 400);
+        assert.match(res.body.message, /audio file/i);
     });
 
     test("revoked grant is 403", async (t) => {
@@ -128,9 +141,23 @@ describe("classroom whisper — coach upload gate", () => {
         assert.equal(res.statusCode, 403);
     });
 
-    test("no grant is 403", async (t) => {
+    test("eligible coach with no grant is authorized (400 audio required)", async (t) => {
         t.mock.method(Classroom, "findById", async () => classroomDoc);
         mockGrant(t, null);
+        const res = mockRes();
+        await classroomWhisperController(
+            {
+                ...coachReq({ classroomId: CLASSROOM_ID, activity: "Circle time", location: "Classroom" }),
+            },
+            res
+        );
+        assert.equal(res.statusCode, 400);
+        assert.match(res.body.message, /audio file/i);
+    });
+
+    test("ineligible coach is 403", async (t) => {
+        t.mock.method(Classroom, "findById", async () => classroomDoc);
+        mockGrant(t, null, { eligible: false });
         const res = mockRes();
         await classroomWhisperController(
             {
@@ -199,15 +226,16 @@ describe("teacher accept — coach classroom recording", () => {
         assert.equal(saved.length, 1);
         assert.equal(String(saved[0].teacherId), LEAD_ID);
         assert.equal(saved[0].uploadedBy, "Casey Coach");
+        assert.equal(String(saved[0].recordedById), COACH_ID);
         assert.equal(teacherLookups[0], LEAD_ID);
         assert.ok(notified.length >= 1);
         assert.equal(notified[0].type, "classroom-recording-added");
         assert.equal(String(notified[0].recipientId), PARENT_ID);
     });
 
-    test("pending grant cannot accept", async (t) => {
+    test("ineligible coach cannot accept", async (t) => {
         t.mock.method(Classroom, "findById", async () => classroomDoc);
-        mockGrant(t, { status: "pending", transcriptAccess: false });
+        mockGrant(t, null, { eligible: false });
         const save = t.mock.method(TeacherAssessment.prototype, "save", async () => {
             throw new Error("should not save");
         });
@@ -220,14 +248,6 @@ describe("teacher accept — coach classroom recording", () => {
     test("revoked grant cannot accept", async (t) => {
         t.mock.method(Classroom, "findById", async () => classroomDoc);
         mockGrant(t, { status: "revoked", transcriptAccess: false });
-        const res = mockRes();
-        await acceptTeacherAssessment(coachReq(), res);
-        assert.equal(res.statusCode, 403);
-    });
-
-    test("no grant cannot accept", async (t) => {
-        t.mock.method(Classroom, "findById", async () => classroomDoc);
-        mockGrant(t, null);
         const res = mockRes();
         await acceptTeacherAssessment(coachReq(), res);
         assert.equal(res.statusCode, 403);
