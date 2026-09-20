@@ -39,7 +39,7 @@ const invitationSchema = new mongoose.Schema({
     sentByRole: { 
         type: String, 
         required: true, 
-        enum: ["admin"] 
+        enum: ["admin", "coach"] 
     },
     status: { 
         type: String, 

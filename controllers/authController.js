@@ -529,6 +529,9 @@ export const registerTeacher = async (req, res) => {
             teacher.education = invitation.education || teacher.education;
             teacher.dateOfBirth = invitation.dateOfBirth || teacher.dateOfBirth;
             teacher.termsAcceptedAt = new Date();
+            if (invitation.sentByRole === "coach" && invitation.sentBy) {
+                teacher.coachId = invitation.sentBy;
+            }
             await teacher.save();
         } else {
             // New teacher: create account
@@ -547,6 +550,9 @@ export const registerTeacher = async (req, res) => {
                 education: invitation.education,
                 dateOfBirth: invitation.dateOfBirth,
                 termsAcceptedAt: new Date(),
+                ...(invitation.sentByRole === "coach" && invitation.sentBy
+                    ? { coachId: invitation.sentBy }
+                    : {}),
             });
 
             await teacher.save();

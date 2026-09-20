@@ -76,6 +76,15 @@ describe("capability matrix", () => {
         assert.ok(!roleHasCapability("teacher", "grantCoachTranscriptAccess"));
     });
 
+    test("inviteTeachers is admin or coach; manageTeachers stays admin-only", () => {
+        assert.ok(roleHasCapability("admin", "inviteTeachers"));
+        assert.ok(roleHasCapability("coach", "inviteTeachers"));
+        assert.ok(!roleHasCapability("teacher", "inviteTeachers"));
+        assert.ok(!roleHasCapability("parent", "inviteTeachers"));
+        assert.ok(roleHasCapability("admin", "manageTeachers"));
+        assert.ok(!roleHasCapability("coach", "manageTeachers"));
+    });
+
     test("unknown capability fails closed for every role", () => {
         for (const role of ["admin", "teacher", "parent", "coach"]) {
             assert.ok(!roleHasCapability(role, "notARealCapability"), role);

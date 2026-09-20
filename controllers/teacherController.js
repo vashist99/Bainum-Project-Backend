@@ -132,6 +132,10 @@ export const getAllTeachers = async (req, res) => {
             const teachers = await Teacher.find({ _id: { $in: ids } });
             return res.status(200).json({ teachers: mapSchoolCollection(teachers) });
         }
+        if (user?.role === "coach") {
+            const teachers = await Teacher.find({ coachId: user.id });
+            return res.status(200).json({ teachers: mapSchoolCollection(teachers) });
+        }
         const teachers = await Teacher.find();
         res.status(200).json({ teachers: mapSchoolCollection(teachers) });
     } catch (error) {

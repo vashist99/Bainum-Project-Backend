@@ -1,17 +1,16 @@
 import express from 'express';
 import { sendTeacherInvitation, verifyTeacherInvitation, getTeacherInvitations } from '../controllers/teacherInvitationController.js';
 import authenticateToken from '../middleware/authMiddleware.js';
+import { requireCapability } from '../lib/permissions.js';
 
 const router = express.Router();
 
-// Send teacher invitation (admin only)
-router.post('/send', authenticateToken, sendTeacherInvitation);
+router.post('/send', authenticateToken, requireCapability('inviteTeachers'), sendTeacherInvitation);
 
 // Verify teacher invitation token (public endpoint)
 router.get('/verify/:token', verifyTeacherInvitation);
 
-// Get all teacher invitations (admin only)
-router.get('/list', authenticateToken, getTeacherInvitations);
+router.get('/list', authenticateToken, requireCapability('inviteTeachers'), getTeacherInvitations);
 
 export default router;
 

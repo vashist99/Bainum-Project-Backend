@@ -2,6 +2,8 @@ import TeacherInvitation from '../models/TeacherInvitation.js';
 import { Teacher } from '../models/User.js';
 import { sendTeacherInvitationEmail } from '../lib/emailService.js';
 import { readSchoolFromBody } from '../lib/schoolFieldAlias.js';
+import { roleHasCapability } from '../lib/permissions.js';
+import { COACH_TEACHER_SLOT_LIMIT, coachTeacherSlotCount } from '../lib/coachTeacherSlots.js';
 
 /**
  * Send invitation to teacher
@@ -14,16 +16,9 @@ export const sendTeacherInvitation = async (req, res) => {
         
         const { id: sentBy, role: sentByRole, name: inviterName } = req.user || {};
 
-        // Validate user is admin
-        if (!sentBy || sentByRole !== 'admin') {
+        if (!sentBy || !roleHasCapability(sentByRole, "inviteTeachers")) {
             return res.status(403).json({ 
-                message: "Only admins can send teacher invitations",
-                debug: process.env.NODE_ENV === 'development' ? {
-                    hasId: !!sentBy,
-                    hasRole: !!sentByRole,
-                    roleValue: sentByRole,
-                    userObject: req.user
-                } : undefined
+                message: "You do not have permission to send teacher invitations",
             });
         }
 
@@ -56,6 +51,26 @@ export const sendTeacherInvitation = async (req, res) => {
         // Check if teacher with this email already exists
         // Allow invitations for existing teachers (for re-invitation or account recovery)
         const existingTeacher = await Teacher.findOne({ email: email.toLowerCase() });
+
+        if (sentByRole === "coach") {
+            const otherCoachId = existingTeacher?.coachId
+                ? String(existingTeacher.coachId)
+                : "";
+            if (otherCoachId && otherCoachId !== String(sentBy)) {
+                return res.status(400).json({
+                    message: "This teacher is already assigned to another coach",
+                });
+            }
+            const used = await coachTeacherSlotCount(sentBy);
+            const reinviteOwn = existingTeacher && otherCoachId === String(sentBy);
+            if (!reinviteOwn && used >= COACH_TEACHER_SLOT_LIMIT) {
+                return res.status(400).json({
+                    message: `You can supervise at most ${COACH_TEACHER_SLOT_LIMIT} teachers at a time`,
+                    used,
+                    limit: COACH_TEACHER_SLOT_LIMIT,
+                });
+            }
+        }
 
         // Check if there's already a pending invitation for this email
         const existingInvitation = await TeacherInvitation.findOne({
@@ -102,7 +117,7 @@ export const sendTeacherInvitation = async (req, res) => {
                 email, 
                 `${firstName} ${lastName}`, 
                 token, 
-                inviterName || 'Administrator'
+                inviterName || (sentByRole === "coach" ? "your coach" : "Administrator")
             );
         } catch (emailError) {
             console.error('Failed to send email, but invitation created:', {
@@ -225,16 +240,17 @@ export const getTeacherInvitations = async (req, res) => {
     try {
         const { id: userId, role: userRole } = req.user || {};
 
-        if (!userId || userRole !== 'admin') {
+        if (!userId || !roleHasCapability(userRole, "inviteTeachers")) {
             return res.status(403).json({ 
-                message: "Only admins can view teacher invitations" 
+                message: "You do not have permission to view teacher invitations" 
             });
         }
 
-        const invitations = await TeacherInvitation.find({})
+        const query = userRole === "coach" ? { sentBy: userId, sentByRole: "coach" } : {};
+        const invitations = await TeacherInvitation.find(query)
             .sort({ createdAt: -1 });
 
-        res.status(200).json({
+        const payload = {
             invitations: invitations.map(inv => ({
                 id: inv._id,
                 email: inv.email,
@@ -248,7 +264,14 @@ export const getTeacherInvitations = async (req, res) => {
                 createdAt: inv.createdAt,
                 acceptedAt: inv.acceptedAt
             }))
-        });
+        };
+
+        if (userRole === "coach") {
+            const used = await coachTeacherSlotCount(userId);
+            payload.slots = { used, limit: COACH_TEACHER_SLOT_LIMIT };
+        }
+
+        res.status(200).json(payload);
     } catch (error) {
         console.error("Error fetching teacher invitations:", error);
         res.status(500).json({ 
