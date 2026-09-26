@@ -215,27 +215,39 @@ export const grantHomeAccess = async (req, res) => {
             if (!enrolled) {
                 return res.status(400).json({ message: "This classroom is not one of the child's classrooms" });
             }
-            const classroom = await Classroom.findById(classroomId).select("teacher").lean();
-            if (!classroom?.teacher) {
-                return res.status(400).json({ message: "This classroom has no lead teacher to grant" });
+            const classroom = await Classroom.findById(classroomId)
+                .select("teacher assistantTeacher")
+                .lean();
+            const teacherIds = [classroom?.teacher, classroom?.assistantTeacher]
+                .map((id) => (id?._id ?? id))
+                .filter(Boolean)
+                .filter((id, index, all) => all.findIndex((other) => String(other) === String(id)) === index);
+            if (teacherIds.length === 0) {
+                return res.status(400).json({ message: "This classroom has no teacher to grant" });
             }
-            // Grant binds to the lead teacher AT GRANT TIME — a later lead
-            // reassignment must not silently transfer home data access.
-            const filter = { childId, scope: "user", granteeId: classroom.teacher };
-            const prior = await HomeViewGrant.findOne(filter).select("status").lean();
-            const set = {
-                status: "active",
-                granteeRole: "teacher",
-                classroomId: classroom._id,
-                initiatedBy: "parent",
-            };
-            if (prior?.status !== "active") Object.assign(set, TRANSCRIPT_TIER_RESET);
-            const grant = await HomeViewGrant.findOneAndUpdate(
-                filter,
-                { $set: set },
-                { upsert: true, new: true, setDefaultsOnInsert: true }
-            );
-            return res.status(200).json({ message: "Home view access granted to the classroom's lead teacher", grant });
+            const grants = [];
+            for (const granteeId of teacherIds) {
+                const filter = { childId, scope: "user", granteeId };
+                const prior = await HomeViewGrant.findOne(filter).select("status").lean();
+                if (prior?.status === "revoked") continue;
+                const set = {
+                    status: "active",
+                    granteeRole: "teacher",
+                    classroomId: classroom._id,
+                    initiatedBy: "parent",
+                };
+                if (prior?.status !== "active") Object.assign(set, TRANSCRIPT_TIER_RESET);
+                const grant = await HomeViewGrant.findOneAndUpdate(
+                    filter,
+                    { $set: set },
+                    { upsert: true, new: true, setDefaultsOnInsert: true }
+                );
+                grants.push(grant);
+            }
+            return res.status(200).json({
+                message: "Home view access granted to the classroom's teachers",
+                grants,
+            });
         }
 
         return res.status(400).json({ message: "Provide scope 'all-staff', a classroomId, or a grantId" });

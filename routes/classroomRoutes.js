@@ -2,6 +2,7 @@ import express from "express";
 import authenticateToken from "../middleware/authMiddleware.js";
 import {
     createClassroom,
+    updateClassroom,
     listClassrooms,
     getClassroom,
     getEligibleParents,
@@ -24,6 +25,7 @@ const router = express.Router();
 //    (assistant teachers cannot remove children).
 //  - DELETE /:id (whole classroom) requires admin or the lead teacher.
 router.post("/", authenticateToken, createClassroom);
+router.patch("/:id", authenticateToken, updateClassroom);
 router.get("/", authenticateToken, listClassrooms);
 router.get("/:id", authenticateToken, getClassroom);
 router.get("/:id/eligible-parents", authenticateToken, getEligibleParents);

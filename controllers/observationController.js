@@ -7,7 +7,7 @@ import {
     observationVisibleTo,
     canHideObservation,
     serializeObservationMeta,
-    applyObservationNote,
+    appendObservationComment,
 } from "../lib/observationVisibility.js";
 import { canViewClassroomTranscripts } from "../lib/permissions.js";
 import { parentMayAccessChild, getResolvedChildIdStringsForParent } from "../lib/parentChildHelpers.js";
@@ -113,11 +113,18 @@ export async function patchTeacherObservationNote(req, res) {
         if (!observationVisibleTo(req.user, doc)) {
             return forbidden(res);
         }
-        applyObservationNote(doc, req.user, req.body?.text);
-        await doc.save();
-        return res.status(200).json(observationPayload(req.user, doc));
+        const result = await appendObservationComment(
+            TeacherAssessment,
+            doc,
+            req.user,
+            req.body?.text
+        );
+        if (result.error) {
+            return res.status(result.status || 400).json({ message: result.error });
+        }
+        return res.status(200).json(observationPayload(req.user, result.doc));
     } catch (error) {
-        console.error("Error saving observation note:", error);
+        console.error("Error saving observation comment:", error);
         return res.status(500).json({ message: error.message });
     }
 }
@@ -172,11 +179,18 @@ export async function patchChildObservationNote(req, res) {
         if (!observationVisibleTo(req.user, doc)) {
             return forbidden(res);
         }
-        applyObservationNote(doc, req.user, req.body?.text);
-        await doc.save();
-        return res.status(200).json(observationPayload(req.user, doc));
+        const result = await appendObservationComment(
+            Assessment,
+            doc,
+            req.user,
+            req.body?.text
+        );
+        if (result.error) {
+            return res.status(result.status || 400).json({ message: result.error });
+        }
+        return res.status(200).json(observationPayload(req.user, result.doc));
     } catch (error) {
-        console.error("Error saving child observation note:", error);
+        console.error("Error saving child observation comment:", error);
         return res.status(500).json({ message: error.message });
     }
 }

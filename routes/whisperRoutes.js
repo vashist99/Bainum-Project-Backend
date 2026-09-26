@@ -15,6 +15,7 @@ import {
 import { resolveValidatedLocation } from '../lib/locationValidator.js';
 import Assessment from '../models/Assessment.js';
 import TeacherAssessment from '../models/TeacherAssessment.js';
+import Classroom from '../models/Classroom.js';
 import authenticateToken from '../middleware/authMiddleware.js';
 import { recomputeAndSaveChildrenCohortStats, recomputeAndSaveTeachersCohortStats, getCohortStats } from '../lib/cohortStatsService.js';
 import {
@@ -43,6 +44,7 @@ import {
     patchChildObservationNote,
     patchChildObservationHidden,
 } from '../controllers/observationController.js';
+import { attachClassroomNames } from '../lib/attachClassroomNames.js';
 import {
     hiddenObservationMongoFilter,
     andQuery,
@@ -619,6 +621,22 @@ router.get('/assessments/cohort-stats/children', async (req, res) => {
     }
 });
 
+async function withTeacherClassroomNames(user, docs) {
+    const rows = withObservationFields(user, docs);
+    const ids = [
+        ...new Set(
+            rows
+                .map((row) => row?.classroomId?._id ?? row?.classroomId)
+                .filter((id) => id != null && id !== "")
+                .map((id) => String(id))
+        ),
+    ];
+    const rooms = ids.length
+        ? await Classroom.find({ _id: { $in: ids } }).select("name").lean()
+        : [];
+    return attachClassroomNames(rows, rooms);
+}
+
 // Route to get all teacher assessments (teachers: own; parents: with active grant; admins: all)
 router.get('/assessments/teacher/:teacherId', authenticateToken, async (req, res) => {
     try {
@@ -630,7 +648,7 @@ router.get('/assessments/teacher/:teacherId', authenticateToken, async (req, res
             const assessments = await TeacherAssessment.find(
                 andQuery({ teacherId }, hiddenObservationMongoFilter(user))
             ).sort({ date: -1 });
-            return res.status(200).json({ assessments: withObservationFields(user, assessments) });
+            return res.status(200).json({ assessments: await withTeacherClassroomNames(user, assessments) });
         }
 
         if (user.role === 'teacher') {
@@ -644,7 +662,7 @@ router.get('/assessments/teacher/:teacherId', authenticateToken, async (req, res
                     hiddenObservationMongoFilter(user),
                 )
             ).sort({ date: -1 });
-            return res.status(200).json({ assessments: withObservationFields(user, assessments) });
+            return res.status(200).json({ assessments: await withTeacherClassroomNames(user, assessments) });
         }
 
         if (user.role === 'parent') {
@@ -664,7 +682,7 @@ router.get('/assessments/teacher/:teacherId', authenticateToken, async (req, res
                     hiddenObservationMongoFilter(user),
                 )
             ).sort({ date: -1 });
-            return res.status(200).json({ assessments: withObservationFields(user, assessments) });
+            return res.status(200).json({ assessments: await withTeacherClassroomNames(user, assessments) });
         }
 
         return res.status(403).json({ message: "Not allowed to access teacher transcripts" });

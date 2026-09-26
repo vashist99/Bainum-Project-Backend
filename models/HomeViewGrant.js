@@ -6,9 +6,10 @@ import mongoose from "mongoose";
  * active. Two shapes:
  *
  * - scope "user":      one specific staff member (teacher or admin).
- *   Per-classroom grant buttons resolve to the classroom's lead teacher
- *   AT GRANT TIME (classroomId kept for display); a later lead
- *   reassignment does NOT transfer access.
+ *   Per-classroom grant buttons resolve to the classroom's lead and
+ *   assistant at grant time (classroomId kept for display). A later
+ *   reassignment does not transfer an existing grant. A revoked row is
+ *   left revoked.
  * - scope "all-staff": every teacher and admin (granteeId absent).
  *
  * Classroom contact auto-opens charts for eligible teachers/coaches

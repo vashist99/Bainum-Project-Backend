@@ -5,8 +5,9 @@ import {
     observationVisibleTo,
     canHideObservation,
     filterVisibleObservations,
-    applyObservationNote,
+    observationCommentUpdate,
     serializeObservationMeta,
+    withObservationFields,
 } from "../../lib/observationVisibility.js";
 import { computeCohortStatsFromAssessments } from "../../lib/cohortStatsService.js";
 
@@ -30,26 +31,95 @@ const hiddenDoc = {
     teacherId: RECORDER.id,
 };
 
-describe("observation note — last write wins", () => {
-    test("later save replaces text and authorship", () => {
-        const doc = { observationNote: null };
-        applyObservationNote(doc, RECORDER, "First look");
-        assert.equal(doc.observationNote.text, "First look");
-        assert.equal(doc.observationNote.authorName, "Riley");
-        assert.equal(doc.observationNote.authorId, RECORDER.id);
+describe("observation comments — append only", () => {
+    const firstAt = new Date("2026-03-01T15:00:00.000Z");
+    const secondAt = new Date("2026-03-02T15:00:00.000Z");
 
-        applyObservationNote(doc, ADMIN, "Admin revision");
-        assert.equal(doc.observationNote.text, "Admin revision");
-        assert.equal(doc.observationNote.authorName, "Ada");
-        assert.equal(doc.observationNote.authorId, ADMIN.id);
+    test("a later post pushes a new comment and leaves the earlier one", () => {
+        const doc = { _id: "a1", observationComments: [] };
+        const first = observationCommentUpdate(doc, RECORDER, "First look", firstAt);
+        assert.equal(first.ok, true);
+        assert.equal(first.update.$push.observationComments.text, "First look");
+        assert.equal(first.update.$push.observationComments.authorName, "Riley");
+        assert.equal(first.update.$push.observationComments.authorId, RECORDER.id);
+
+        const withFirst = {
+            _id: "a1",
+            observationComments: [first.update.$push.observationComments],
+        };
+        const second = observationCommentUpdate(withFirst, ADMIN, "Agreed", secondAt);
+        assert.equal(second.update.$push.observationComments.text, "Agreed");
+        assert.equal(second.update.$push.observationComments.authorName, "Ada");
+        assert.equal(withFirst.observationComments[0].text, "First look");
+        assert.equal(withFirst.observationComments[0].authorId, RECORDER.id);
     });
 
-    test("empty text clears the shared note", () => {
-        const doc = {};
-        applyObservationNote(doc, RECORDER, "Keep");
-        applyObservationNote(doc, OTHER, "   ");
-        assert.equal(doc.observationNote.text, "");
-        assert.equal(doc.observationNote.authorId, null);
+    test("empty and over-long text are rejected", () => {
+        const empty = observationCommentUpdate({ _id: "a1" }, OTHER, "   ");
+        assert.equal(empty.ok, false);
+        assert.match(empty.message, /empty/i);
+
+        const tooLong = observationCommentUpdate({ _id: "a1" }, OTHER, "a".repeat(4001));
+        assert.equal(tooLong.ok, false);
+        assert.match(tooLong.message, /4000/);
+    });
+
+    test("a legacy note becomes the first comment and is cleared", () => {
+        const doc = {
+            _id: "a1",
+            observationNote: {
+                text: "Old note",
+                authorName: "Riley",
+                authorId: RECORDER.id,
+                updatedAt: firstAt,
+            },
+        };
+        const plan = observationCommentUpdate(doc, ADMIN, "Next", secondAt);
+        const comments = plan.update.$set.observationComments;
+        assert.equal(comments[0].text, "Old note");
+        assert.equal(comments[0].authorName, "Riley");
+        assert.equal(comments[0].createdAt, firstAt);
+        assert.equal(comments[1].text, "Next");
+        assert.equal(comments[1].authorId, ADMIN.id);
+        assert.equal(plan.update.$set.observationNote.text, "");
+        assert.equal(plan.update.$set.observationNote.authorId, null);
+    });
+
+    test("serialization returns comments oldest first and omits the note field", () => {
+        const later = {
+            text: "Later",
+            authorName: "Ada",
+            authorId: ADMIN.id,
+            createdAt: secondAt,
+        };
+        const earlier = {
+            text: "Earlier",
+            authorName: "Riley",
+            authorId: RECORDER.id,
+            createdAt: firstAt,
+        };
+        const meta = serializeObservationMeta(RECORDER, {
+            observationComments: [later, earlier],
+            observationNote: { text: "Should not win", authorName: "Other" },
+        });
+        assert.deepEqual(
+            meta.observationComments.map((comment) => comment.text),
+            ["Earlier", "Later"]
+        );
+        assert.equal(Object.hasOwn(meta, "observationNote"), false);
+
+        const [listed] = withObservationFields(RECORDER, [
+            {
+                observationNote: {
+                    text: "Legacy only",
+                    authorName: "Riley",
+                    authorId: RECORDER.id,
+                    updatedAt: firstAt,
+                },
+            },
+        ]);
+        assert.equal(listed.observationComments[0].text, "Legacy only");
+        assert.equal(Object.hasOwn(listed, "observationNote"), false);
     });
 });
 

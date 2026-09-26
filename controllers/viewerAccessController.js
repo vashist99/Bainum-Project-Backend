@@ -128,15 +128,19 @@ export const getHomeViewers = async (req, res) => {
         }
 
         const eligible = await listEligibleHomeViewers(childId);
+        const teacherRows = (eligible.teachers || []).map((teacher) =>
+            typeof teacher === "string" ? { id: teacher, slot: "" } : teacher
+        );
+        const teacherIds = teacherRows.map((teacher) => teacher.id);
         const [teacherNames, coachNames, parentNames] = await Promise.all([
-            namesById(Teacher, eligible.teachers),
+            namesById(Teacher, teacherIds),
             namesById(Coach, eligible.coaches),
             namesById(Parent, eligible.parentIds),
         ]);
         const grants = await HomeViewGrant.find({
             childId,
             scope: "user",
-            granteeId: { $in: [...eligible.teachers, ...eligible.coaches] },
+            granteeId: { $in: [...teacherIds, ...eligible.coaches] },
         }).lean();
         const grantById = Object.fromEntries(grants.map((g) => [String(g.granteeId), g]));
 
@@ -148,12 +152,14 @@ export const getHomeViewers = async (req, res) => {
                 transcripts: true,
                 switchable: false,
             })),
-            ...eligible.teachers.map((id) => {
+            ...teacherRows.map((teacher) => {
+                const id = teacher.id;
                 const grant = grantById[id];
                 const revoked = grant?.status === "revoked";
                 return {
                     ...(teacherNames[id] || { id, name: "Teacher" }),
                     role: "teacher",
+                    slot: teacher.slot || "",
                     charts: !revoked,
                     transcripts: !revoked && !!grant?.transcriptAccess,
                     switchable: true,

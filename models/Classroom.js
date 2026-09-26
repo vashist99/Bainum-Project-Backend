@@ -17,6 +17,12 @@ const classroomSchema = new mongoose.Schema({
     },
     /** Center NAME string, matching the Teacher.center convention. */
     center: { type: String, required: true, trim: true },
+    /** Optional early-childhood band. Unset classrooms stay valid. */
+    ageGroup: {
+        type: String,
+        enum: ["Infant", "Toddler", "Preschool", "Pre-K", "Mixed ages"],
+        default: null,
+    },
     children: [{ type: mongoose.Schema.Types.ObjectId, ref: "Child" }],
     parents: [{ type: mongoose.Schema.Types.ObjectId, ref: "Parent" }],
 }, {

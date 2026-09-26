@@ -16,6 +16,7 @@ import {
 const CHILD_ID = "64b0000000000000000000c1";
 const CLASSROOM_ID = "64b0000000000000000000aa";
 const TEACHER_ID = "64b000000000000000000002";
+const ASSISTANT_ID = "64b000000000000000000003";
 const ADMIN_ID = "64b000000000000000000009";
 const PARENT_ID = "64b000000000000000000001";
 
@@ -196,6 +197,45 @@ describe("homeAccessController — grantHomeAccess", () => {
         assert.equal(captured.update.$set.status, "active");
         assert.equal(captured.update.$set.granteeRole, "teacher");
         assert.equal(String(captured.update.$set.classroomId), CLASSROOM_ID);
+    });
+
+    test("per-classroom grant includes the assistant and skips a revoked assistant", async (t) => {
+        mockVerifiedParent(t);
+        t.mock.method(Child, "findById", () =>
+            selectLeanQuery({ classrooms: [new mongoose.Types.ObjectId(CLASSROOM_ID)] })
+        );
+        t.mock.method(Classroom, "findById", () =>
+            selectLeanQuery({
+                _id: new mongoose.Types.ObjectId(CLASSROOM_ID),
+                teacher: new mongoose.Types.ObjectId(TEACHER_ID),
+                assistantTeacher: new mongoose.Types.ObjectId(ASSISTANT_ID),
+            })
+        );
+        t.mock.method(HomeViewGrant, "findOne", (filter) =>
+            selectLeanQuery(
+                String(filter.granteeId) === ASSISTANT_ID ? { status: "revoked" } : null
+            )
+        );
+        const captured = [];
+        t.mock.method(HomeViewGrant, "findOneAndUpdate", async (query, update) => {
+            captured.push({ query, update });
+            return { ...query, ...update.$set };
+        });
+        const res = mockRes();
+        await grantHomeAccess(
+            {
+                params: { childId: CHILD_ID },
+                body: { classroomId: CLASSROOM_ID },
+                user: { id: PARENT_ID, role: "parent" },
+            },
+            res
+        );
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(
+            captured.map((row) => String(row.query.granteeId)),
+            [TEACHER_ID]
+        );
+        assert.equal(res.body.grants.length, 1);
     });
 
     test("classroom not linked to the child is rejected", async (t) => {

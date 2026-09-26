@@ -2,9 +2,11 @@ import mongoose from "mongoose";
 import { Coach, Teacher } from "../models/User.js";
 import Classroom from "../models/Classroom.js";
 import CoachClassroomGrant from "../models/CoachClassroomGrant.js";
+import TeacherAssessment from "../models/TeacherAssessment.js";
 import { createCoachGrantNotification } from "../lib/notificationService.js";
 import { coachClassroomTier } from "../lib/permissions.js";
 import { logActivity } from "../lib/activityLogService.js";
+import { coachPerformanceAccess, selectCoachPerformanceRows } from "../lib/coachPerformance.js";
 
 function isValidId(id) {
     return mongoose.Types.ObjectId.isValid(id);
@@ -468,6 +470,48 @@ export const pendingGrantsForTeacher = async (req, res) => {
         });
     } catch (error) {
         console.error("Error listing pending coach grants:", error);
+        res.status(500).json({ message: error.message || "Internal server error" });
+    }
+};
+
+/** GET /api/coaches/:coachId/performance — combined chart rows for assigned teachers. */
+export const getCoachPerformance = async (req, res) => {
+    try {
+        const { coachId } = req.params;
+        if (!isValidId(coachId)) {
+            return res.status(400).json({ message: "Invalid coach id" });
+        }
+        if (!coachPerformanceAccess(req.user, coachId)) {
+            return res.status(403).json({ message: "You do not have permission to perform this action" });
+        }
+        const coach = await Coach.findById(coachId).select("name");
+        if (!coach) return res.status(404).json({ message: "Coach not found" });
+
+        const { teachers, classrooms } = await classroomsInCoachScope(coachId);
+        const teacherIds = teachers.map((teacher) => teacher._id);
+        const classroomIds = classrooms.map((room) => room._id);
+        const stored = teacherIds.length && classroomIds.length
+            ? await TeacherAssessment.find({
+                teacherId: { $in: teacherIds },
+                classroomId: { $in: classroomIds },
+                hidden: { $ne: true },
+                activityContext: { $ne: "home" },
+            }).select("teacherId classroomId date wordsPerMinute wordCount categoryWPM categoryWordCount hidden activityContext")
+            : [];
+
+        const assessments = selectCoachPerformanceRows({
+            assignedTeacherIds: teacherIds,
+            classrooms,
+            assessments: stored,
+        });
+
+        res.status(200).json({
+            coach: { id: coach._id, name: coach.name },
+            assignedTeacherCount: teachers.length,
+            assessments,
+        });
+    } catch (error) {
+        console.error("Error loading coach performance:", error);
         res.status(500).json({ message: error.message || "Internal server error" });
     }
 };

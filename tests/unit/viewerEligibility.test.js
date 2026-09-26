@@ -6,6 +6,7 @@ import {
     classroomTeacherIds,
     coachEligibleForChildHome,
     coachEligibleForClassroom,
+    homeViewerSlot,
     parentEligibleForClassroom,
     teacherEligibleForChildHome,
 } from "../../lib/viewerEligibility.js";
@@ -105,6 +106,51 @@ describe("viewerEligibility", () => {
                 classrooms: [{ ...classroom, children: [] }],
                 teacherCoachById,
             }),
+            false
+        );
+    });
+
+    test("home viewer slot is assistant, and lead wins when the teacher leads another shared room", () => {
+        assert.equal(
+            homeViewerSlot({
+                teacherId: ASSISTANT,
+                childId: CHILD,
+                childParentIds: [PARENT],
+                classrooms: [classroom],
+            }),
+            "assistant"
+        );
+        assert.equal(
+            homeViewerSlot({
+                teacherId: LEAD,
+                childId: CHILD,
+                childParentIds: [PARENT],
+                classrooms: [classroom],
+            }),
+            "lead"
+        );
+        const alsoLeads = {
+            _id: "room2",
+            teacher: ASSISTANT,
+            assistantTeacher: null,
+            children: [CHILD],
+            parents: [PARENT],
+        };
+        assert.equal(
+            homeViewerSlot({
+                teacherId: ASSISTANT,
+                childId: CHILD,
+                childParentIds: [PARENT],
+                classrooms: [classroom, alsoLeads],
+            }),
+            "lead"
+        );
+        assert.equal(
+            chartAccessAllowed({ eligible: true, revoked: false }),
+            true
+        );
+        assert.equal(
+            chartAccessAllowed({ eligible: true, revoked: true }),
             false
         );
     });

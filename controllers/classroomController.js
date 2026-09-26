@@ -9,6 +9,7 @@ import {
     canManageClassroom,
     classroomRoleForUser,
     validateAssistant,
+    parseAgeGroup,
     resolveChildCenter,
     parseInvitePayload,
 } from "../lib/classroomHelpers.js";
@@ -51,6 +52,7 @@ function toClassroomSummary(classroom, user, roleOverride = null) {
             ? { id: classroom.assistantTeacher._id ?? classroom.assistantTeacher, name: classroom.assistantTeacher.name ?? null }
             : null,
         childCount: Array.isArray(classroom.children) ? classroom.children.length : 0,
+        ageGroup: classroom.ageGroup || null,
         role,
     };
 }
@@ -62,11 +64,15 @@ export const createClassroom = async (req, res) => {
             return res.status(403).json({ message: "Only admins and teachers can create classrooms" });
         }
 
-        const { name, teacherId: bodyTeacherId, assistantTeacherId } = req.body;
+        const { name, teacherId: bodyTeacherId, assistantTeacherId, ageGroup } = req.body;
         const bodyCenter = readSchoolFromBody(req.body);
         const trimmedName = typeof name === "string" ? name.trim() : "";
         if (!trimmedName) {
             return res.status(400).json({ message: "Classroom name is required" });
+        }
+        const parsedAge = parseAgeGroup(ageGroup);
+        if (!parsedAge.ok) {
+            return res.status(400).json({ message: parsedAge.message });
         }
 
         // Resolve the lead teacher and center per role. Teachers can never
@@ -120,6 +126,7 @@ export const createClassroom = async (req, res) => {
             teacher: leadTeacher._id,
             assistantTeacher: assistantDoc ? assistantDoc._id : null,
             center,
+            ageGroup: parsedAge.ageGroup,
             children: [],
             parents: [],
         });
@@ -159,10 +166,118 @@ export const createClassroom = async (req, res) => {
                 center: classroom.center,
                 teacher: { id: leadTeacher._id, name: leadTeacher.name },
                 assistantTeacher: assistantDoc ? { id: assistantDoc._id, name: assistantDoc.name } : null,
+                ageGroup: classroom.ageGroup || null,
             }),
         });
     } catch (error) {
         console.error("Error creating classroom:", error);
+        res.status(500).json({ message: error.message });
+    }
+};
+
+/** Dynamic imports kept on an object so unit tests can stub them. */
+export const classroomEditDeps = {
+    async coachMayEdit(user, classroom) {
+        const { canViewClassroomAggregates } = await import("../lib/permissions.js");
+        return canViewClassroomAggregates(user, classroom);
+    },
+    async syncViewers(classroomId) {
+        const { syncViewerEligibility } = await import("../lib/viewerAccessService.js");
+        await syncViewerEligibility({ classroomId });
+    },
+};
+
+export const updateClassroom = async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid classroom id" });
+        }
+        const classroom = await Classroom.findById(id);
+        if (!classroom) {
+            return res.status(404).json({ message: "Classroom not found" });
+        }
+        const user = req.user;
+        if (!user) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+
+        let allowed = canManageClassroom(user, classroom);
+        if (!allowed && user.role === "coach") {
+            allowed = await classroomEditDeps.coachMayEdit(user, classroom);
+        }
+        if (!allowed) {
+            return res.status(403).json({ message: "You cannot edit this classroom" });
+        }
+
+        const { name, teacherId, assistantTeacherId, ageGroup } = req.body || {};
+        const trimmedName = typeof name === "string" ? name.trim() : "";
+        if (!trimmedName) {
+            return res.status(400).json({ message: "Classroom name is required" });
+        }
+        const parsedAge = parseAgeGroup(ageGroup);
+        if (!parsedAge.ok) {
+            return res.status(400).json({ message: parsedAge.message });
+        }
+        if (!teacherId || !mongoose.Types.ObjectId.isValid(String(teacherId))) {
+            return res.status(400).json({ message: "Lead teacher is required" });
+        }
+        const leadTeacher = await Teacher.findById(teacherId);
+        if (!leadTeacher) {
+            return res.status(404).json({ message: "Lead teacher not found" });
+        }
+        if (!isSameCenter(leadTeacher.center, classroom.center)) {
+            return res.status(400).json({ message: "Selected teacher does not belong to the classroom's school" });
+        }
+
+        let assistantDoc = null;
+        const clearingAssistant = assistantTeacherId == null || assistantTeacherId === "";
+        if (!clearingAssistant) {
+            if (!mongoose.Types.ObjectId.isValid(String(assistantTeacherId))) {
+                return res.status(400).json({ message: "Invalid assistant teacher id" });
+            }
+            assistantDoc = await Teacher.findById(assistantTeacherId);
+            const check = validateAssistant({
+                leadId: leadTeacher._id,
+                assistantDoc,
+                classroomCenter: classroom.center,
+            });
+            if (!check.ok) {
+                return res.status(400).json({ message: check.message });
+            }
+        }
+
+        const previousLead = String(classroom.teacher?._id ?? classroom.teacher ?? "");
+        const previousAssistant = String(classroom.assistantTeacher?._id ?? classroom.assistantTeacher ?? "");
+        const nextAssistant = assistantDoc ? String(assistantDoc._id) : "";
+
+        classroom.name = trimmedName;
+        classroom.teacher = leadTeacher._id;
+        classroom.assistantTeacher = assistantDoc ? assistantDoc._id : null;
+        classroom.ageGroup = parsedAge.ageGroup;
+        await classroom.save();
+
+        if (previousLead !== String(leadTeacher._id) || previousAssistant !== nextAssistant) {
+            try {
+                await classroomEditDeps.syncViewers(classroom._id);
+            } catch (err) {
+                console.error("[classroom update] syncViewerEligibility:", err.message);
+            }
+        }
+
+        res.status(200).json({
+            message: "Classroom updated",
+            classroom: withSchoolField({
+                id: classroom._id,
+                name: classroom.name,
+                center: classroom.center,
+                teacher: { id: leadTeacher._id, name: leadTeacher.name },
+                assistantTeacher: assistantDoc ? { id: assistantDoc._id, name: assistantDoc.name } : null,
+                ageGroup: classroom.ageGroup || null,
+            }),
+        });
+    } catch (error) {
+        console.error("Error updating classroom:", error);
         res.status(500).json({ message: error.message });
     }
 };

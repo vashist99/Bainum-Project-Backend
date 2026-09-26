@@ -6,6 +6,7 @@ import {
     assignTeacherToCoach,
     unassignTeacherFromCoach,
     getCoachOverview,
+    getCoachPerformance,
     revokeGrant,
     setTranscriptAccess,
 } from '../controllers/coachController.js';
@@ -20,6 +21,7 @@ router.delete('/:coachId/teachers/:teacherId', authenticateToken, requireCapabil
 
 // Coach dashboard
 router.get('/me/overview', authenticateToken, requireRole('coach'), getCoachOverview);
+router.get('/:coachId/performance', authenticateToken, getCoachPerformance);
 
 // Grant lifecycle
 router.post('/grants/request', authenticateToken, goneRequestFlow);

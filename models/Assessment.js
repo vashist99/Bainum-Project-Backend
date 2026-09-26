@@ -112,6 +112,17 @@ const assessmentSchema = new mongoose.Schema({
         authorId: { type: mongoose.Schema.Types.ObjectId, default: null },
         updatedAt: { type: Date, default: null },
     },
+    observationComments: {
+        type: [
+            {
+                text: { type: String, required: true, maxlength: 4000 },
+                authorName: { type: String, default: "" },
+                authorId: { type: mongoose.Schema.Types.ObjectId, default: null },
+                createdAt: { type: Date, default: Date.now },
+            },
+        ],
+        default: [],
+    },
     hidden: { type: Boolean, default: false, index: true },
     recordedById: { type: mongoose.Schema.Types.ObjectId, default: null, index: true },
 });

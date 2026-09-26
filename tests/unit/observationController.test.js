@@ -48,6 +48,7 @@ function mockDoc(overrides = {}) {
         recordedById: RECORDER_ID,
         hidden: false,
         observationNote: null,
+        observationComments: [],
         async save() {
             return this;
         },
@@ -113,10 +114,25 @@ describe("observation PATCH authorization", () => {
         assert.equal(res.statusCode, 403);
     });
 
-    test("recorder can hide and the note remains last-write", async (t) => {
+    test("recorder can hide, then comments append without replacing or clearing", async (t) => {
         mockPlaceAccess(t);
         const doc = mockDoc();
         t.mock.method(TeacherAssessment, "findById", async () => doc);
+        t.mock.method(TeacherAssessment, "findOneAndUpdate", async (_filter, update) => {
+            if (update.$set?.observationComments) {
+                doc.observationComments = update.$set.observationComments;
+            }
+            if (update.$push?.observationComments) {
+                doc.observationComments = [
+                    ...(doc.observationComments || []),
+                    update.$push.observationComments,
+                ];
+            }
+            if (update.$set?.observationNote) {
+                doc.observationNote = update.$set.observationNote;
+            }
+            return doc;
+        });
         const hideRes = mockRes();
         await patchTeacherObservationHidden(
             {
@@ -130,16 +146,48 @@ describe("observation PATCH authorization", () => {
         assert.equal(hideRes.body.hidden, true);
         assert.equal(hideRes.body.canHide, true);
 
-        const noteRes = mockRes();
+        const viewer = { id: RECORDER_ID, role: "teacher", name: "Riley" };
+        const firstRes = mockRes();
         await patchTeacherObservationNote(
             {
                 params: { assessmentId: ASSESSMENT_ID },
                 body: { text: "Recorder note" },
-                user: { id: RECORDER_ID, role: "teacher", name: "Riley" },
+                user: viewer,
             },
-            noteRes
+            firstRes
         );
-        assert.equal(noteRes.statusCode, 200);
-        assert.equal(noteRes.body.observationNote.text, "Recorder note");
+        assert.equal(firstRes.statusCode, 200);
+        assert.equal(firstRes.body.observationComments[0].text, "Recorder note");
+        assert.equal(Object.hasOwn(firstRes.body, "observationNote"), false);
+
+        const secondRes = mockRes();
+        await patchTeacherObservationNote(
+            {
+                params: { assessmentId: ASSESSMENT_ID },
+                body: { text: "Still there" },
+                user: viewer,
+            },
+            secondRes
+        );
+        assert.equal(secondRes.statusCode, 200);
+        assert.deepEqual(
+            secondRes.body.observationComments.map((comment) => comment.text),
+            ["Recorder note", "Still there"]
+        );
+
+        const emptyRes = mockRes();
+        await patchTeacherObservationNote(
+            {
+                params: { assessmentId: ASSESSMENT_ID },
+                body: { text: "   " },
+                user: viewer,
+            },
+            emptyRes
+        );
+        assert.equal(emptyRes.statusCode, 400);
+        assert.deepEqual(
+            doc.observationComments.map((comment) => comment.text),
+            ["Recorder note", "Still there"]
+        );
     });
 });
