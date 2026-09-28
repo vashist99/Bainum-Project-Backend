@@ -72,7 +72,7 @@ describe("updateClassroom", () => {
                     name: "Sunflowers",
                     teacherId: LEAD_ID,
                     assistantTeacherId: ASSISTANT_ID,
-                    ageGroup: "Pre-K",
+                    ageGroup: "4-5 YO",
                     school: "Center B",
                 },
             },
@@ -82,7 +82,7 @@ describe("updateClassroom", () => {
         assert.equal(res.statusCode, 200);
         assert.equal(doc.saved, true);
         assert.equal(String(doc.assistantTeacher), ASSISTANT_ID);
-        assert.equal(doc.ageGroup, "Pre-K");
+        assert.equal(doc.ageGroup, "4-5 YO");
         assert.equal(doc.center, "Center A");
         assert.equal(synced, 1);
     });
@@ -154,6 +154,43 @@ describe("updateClassroom", () => {
         );
         assert.equal(res.statusCode, 400);
         assert.equal(doc.saved, false);
+    });
+
+    test("a former age-group name is rejected on input", async (t) => {
+        const doc = classroomDoc();
+        t.mock.method(Classroom, "findById", async () => doc);
+        const res = mockRes();
+        await updateClassroom(
+            {
+                params: { id: CLASSROOM_ID },
+                user: { id: LEAD_ID, role: "teacher" },
+                body: { name: "Sunflowers", teacherId: LEAD_ID, ageGroup: "Pre-K" },
+            },
+            res
+        );
+        assert.equal(res.statusCode, 400);
+        assert.equal(doc.saved, false);
+        assert.equal(doc.ageGroup, null);
+    });
+
+    test("a name-only change stores the year range for a former Toddler room", async (t) => {
+        const doc = classroomDoc({ ageGroup: "Toddler" });
+        t.mock.method(Classroom, "findById", async () => doc);
+        stubTeachers(t);
+        t.mock.method(classroomEditDeps, "syncViewers", async () => {});
+        const res = mockRes();
+        await updateClassroom(
+            {
+                params: { id: CLASSROOM_ID },
+                user: { id: LEAD_ID, role: "teacher" },
+                body: { name: "Owls", teacherId: LEAD_ID, assistantTeacherId: null },
+            },
+            res
+        );
+        assert.equal(res.statusCode, 200);
+        assert.equal(doc.name, "Owls");
+        assert.equal(doc.ageGroup, "1-2 YO");
+        assert.equal(res.body.classroom.ageGroup, "1-2 YO");
     });
 
     test("a lead from another school is rejected", async (t) => {
@@ -243,12 +280,12 @@ describe("updateClassroom", () => {
             {
                 params: { id: CLASSROOM_ID },
                 user: { id: COACH_ID, role: "coach" },
-                body: { name: "Sunflowers", teacherId: LEAD_ID, assistantTeacherId: ASSISTANT_ID, ageGroup: "Toddler" },
+                body: { name: "Sunflowers", teacherId: LEAD_ID, assistantTeacherId: ASSISTANT_ID, ageGroup: "1-2 YO" },
             },
             res
         );
         assert.equal(res.statusCode, 200);
-        assert.equal(doc.ageGroup, "Toddler");
+        assert.equal(doc.ageGroup, "1-2 YO");
         assert.equal(String(doc.assistantTeacher), ASSISTANT_ID);
     });
 });

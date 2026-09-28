@@ -10,6 +10,7 @@ import {
     classroomRoleForUser,
     validateAssistant,
     parseAgeGroup,
+    normalizeStoredAgeGroup,
     resolveChildCenter,
     parseInvitePayload,
 } from "../lib/classroomHelpers.js";
@@ -52,7 +53,7 @@ function toClassroomSummary(classroom, user, roleOverride = null) {
             ? { id: classroom.assistantTeacher._id ?? classroom.assistantTeacher, name: classroom.assistantTeacher.name ?? null }
             : null,
         childCount: Array.isArray(classroom.children) ? classroom.children.length : 0,
-        ageGroup: classroom.ageGroup || null,
+        ageGroup: normalizeStoredAgeGroup(classroom.ageGroup),
         role,
     };
 }
@@ -254,7 +255,9 @@ export const updateClassroom = async (req, res) => {
         classroom.name = trimmedName;
         classroom.teacher = leadTeacher._id;
         classroom.assistantTeacher = assistantDoc ? assistantDoc._id : null;
-        classroom.ageGroup = parsedAge.ageGroup;
+        classroom.ageGroup = ageGroup === undefined
+            ? normalizeStoredAgeGroup(classroom.ageGroup)
+            : parsedAge.ageGroup;
         await classroom.save();
 
         if (previousLead !== String(leadTeacher._id) || previousAssistant !== nextAssistant) {

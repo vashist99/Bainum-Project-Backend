@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { CLASSROOM_AGE_GROUPS, normalizeStoredAgeGroup } from "../lib/classroomHelpers.js";
 
 const classroomSchema = new mongoose.Schema({
     name: { type: String, required: true, trim: true },
@@ -17,16 +18,21 @@ const classroomSchema = new mongoose.Schema({
     },
     /** Center NAME string, matching the Teacher.center convention. */
     center: { type: String, required: true, trim: true },
-    /** Optional early-childhood band. Unset classrooms stay valid. */
+    /** Optional age range in years. Unset classrooms stay valid. */
     ageGroup: {
         type: String,
-        enum: ["Infant", "Toddler", "Preschool", "Pre-K", "Mixed ages"],
+        enum: [...CLASSROOM_AGE_GROUPS, null],
         default: null,
     },
     children: [{ type: mongoose.Schema.Types.ObjectId, ref: "Child" }],
     parents: [{ type: mongoose.Schema.Types.ObjectId, ref: "Parent" }],
 }, {
     timestamps: true,
+});
+
+// Any save path (roster, invite, edit) must not fail on a former named band.
+classroomSchema.pre("validate", function convertLegacyAgeGroup() {
+    this.ageGroup = normalizeStoredAgeGroup(this.ageGroup);
 });
 
 const Classroom = mongoose.model("Classroom", classroomSchema);
