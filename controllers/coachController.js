@@ -496,7 +496,7 @@ export const getCoachPerformance = async (req, res) => {
                 classroomId: { $in: classroomIds },
                 hidden: { $ne: true },
                 activityContext: { $ne: "home" },
-            }).select("teacherId classroomId date wordsPerMinute wordCount categoryWPM categoryWordCount hidden activityContext")
+            }).select("teacherId classroomId date wordsPerMinute wordCount durationSeconds categoryWPM categoryWordCount hidden activity activityContext languageFeatures categoryLanguageFeatures")
             : [];
 
         const assessments = selectCoachPerformanceRows({

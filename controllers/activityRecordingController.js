@@ -8,6 +8,7 @@ import {
     computeCategoryWordCountFromSegments,
     deriveCategoryWordCountFromKeywordCounts,
 } from "../lib/transcriptProcessor.js";
+import { languageFeaturesForTranscript } from "../lib/languageFeatures.js";
 import {
     isPredefinedActivity,
     validateCustomActivity,
@@ -163,6 +164,7 @@ export const activityRecordingController = async (req, res) => {
             durationSeconds,
             wordsPerMinute,
             categoryWPM,
+            ...languageFeaturesForTranscript(transcript),
             uploadedBy: user.name || "Unknown",
             date: assessmentDate,
             ragSegments: ragSegments || [],

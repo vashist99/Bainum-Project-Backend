@@ -37,6 +37,7 @@ import { resolveParentAcceptTarget } from '../lib/activityRecordingTargets.js';
 import { roleHasCapability } from '../lib/permissions.js';
 import { transcriptExpiryFrom } from '../lib/transcriptRetention.js';
 import { redactTranscriptPayload } from '../lib/piiRedaction.js';
+import { languageFeaturesForTranscript } from '../lib/languageFeatures.js';
 import { acceptTeacherAssessment } from '../controllers/teacherAcceptController.js';
 import {
     patchTeacherObservationNote,
@@ -400,6 +401,7 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
             durationSeconds: durationSeconds ?? null,
             wordsPerMinute: wordsPerMinute ?? null,
             categoryWPM: categoryWPM ?? { science: null, social: null, literature: null, language: null },
+            ...languageFeaturesForTranscript(redacted.transcript),
             activity: finalActivity,
             activityContext: expectedContext,
             location: locationResult.location,
@@ -442,6 +444,8 @@ router.post('/assessments/activity/accept', authenticateToken, async (req, res) 
                 durationSeconds: base.durationSeconds,
                 wordsPerMinute: base.wordsPerMinute,
                 categoryWPM: base.categoryWPM,
+                languageFeatures: base.languageFeatures ?? null,
+                categoryLanguageFeatures: base.categoryLanguageFeatures ?? null,
                 recordedById: base.recordedById,
             });
             await teacherAssessment.save();
@@ -535,7 +539,8 @@ router.post('/assessments/accept', async (req, res) => {
             wordCount: wordCount ?? null,
             durationSeconds: durationSeconds ?? null,
             wordsPerMinute: wordsPerMinute ?? null,
-            categoryWPM: categoryWPM ?? { science: null, social: null, literature: null, language: null }
+            categoryWPM: categoryWPM ?? { science: null, social: null, literature: null, language: null },
+            ...languageFeaturesForTranscript(redacted.transcript),
         });
 
         await assessment.save();

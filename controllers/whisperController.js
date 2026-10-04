@@ -4,6 +4,7 @@ import revai from "../lib/revai.js";
 import ragClassifier from "../lib/ragClassifier.js";
 import { analyzeTranscript, extractKeywordSegments, computeCategoryWordCountFromSegments, deriveCategoryWordCountFromKeywordCounts } from "../lib/transcriptProcessor.js";
 import { redactPii } from "../lib/piiRedaction.js";
+import { languageFeaturesForTranscript } from "../lib/languageFeatures.js";
 
 dotenv.config();
 
@@ -215,6 +216,7 @@ const revaiController = async (req, res) => {
             durationSeconds,
             wordsPerMinute,
             categoryWPM,
+            ...languageFeaturesForTranscript(transcript),
             uploadedBy: uploadedBy || "Unknown",
             date: assessmentDate,
             ragSegments: ragSegments || [],

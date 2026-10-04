@@ -11,6 +11,7 @@ import Assessment from "../models/Assessment.js";
 import { Child } from "../models/User.js";
 import { recomputeAndSaveChildrenCohortStats } from "../lib/cohortStatsService.js";
 import { redactPii } from "../lib/piiRedaction.js";
+import { languageFeaturesForTranscript } from "../lib/languageFeatures.js";
 
 /**
  * ENACT integration: receive audio from the ENACT mobile app, transcribe it via RevAI,
@@ -137,6 +138,7 @@ const enactController = async (req, res) => {
             durationSeconds,
             wordsPerMinute,
             categoryWPM,
+            ...languageFeaturesForTranscript(transcript),
             // ENACT submissions are parent recordings made at home.
             activityContext: "home",
         };

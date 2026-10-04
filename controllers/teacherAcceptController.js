@@ -12,6 +12,7 @@ import {
 import { transcriptExpiryFrom } from "../lib/transcriptRetention.js";
 import { fanOutClassroomRecordingAddedNotifications } from "../lib/notificationService.js";
 import { redactTranscriptPayload } from "../lib/piiRedaction.js";
+import { languageFeaturesForTranscript } from "../lib/languageFeatures.js";
 import { recomputeAndSaveTeachersCohortStats } from "../lib/cohortStatsService.js";
 import { logActivity } from "../lib/activityLogService.js";
 
@@ -119,6 +120,7 @@ export async function acceptTeacherAssessment(req, res) {
             durationSeconds: durationSeconds ?? null,
             wordsPerMinute: wordsPerMinute ?? null,
             categoryWPM: safeCategoryWPM,
+            ...languageFeaturesForTranscript(redacted.transcript),
             recordedById: req.user?.id || null,
         });
 

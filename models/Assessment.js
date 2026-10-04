@@ -106,6 +106,8 @@ const assessmentSchema = new mongoose.Schema({
         literature: { type: Number, default: null },
         language: { type: Number, default: null }
     },
+    languageFeatures: { type: mongoose.Schema.Types.Mixed, default: null },
+    categoryLanguageFeatures: { type: mongoose.Schema.Types.Mixed, default: null },
     observationNote: {
         text: { type: String, default: "" },
         authorName: { type: String, default: "" },

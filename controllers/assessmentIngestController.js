@@ -5,6 +5,7 @@ import { recomputeAndSaveChildrenCohortStats } from "../lib/cohortStatsService.j
 import { getResolvedChildIdStringsForParent } from "../lib/parentChildHelpers.js";
 import { transcriptExpiryFrom } from "../lib/transcriptRetention.js";
 import { redactTranscriptPayload } from "../lib/piiRedaction.js";
+import { languageFeaturesForTranscript } from "../lib/languageFeatures.js";
 
 /**
  * Case-insensitive parent email lookup.
@@ -106,6 +107,7 @@ export const ingestAssessmentByParentEmail = async (req, res) => {
                 wordCount: wordCount ?? null,
                 durationSeconds: durationSeconds ?? null,
                 wordsPerMinute: wordsPerMinute ?? null,
+                ...languageFeaturesForTranscript(redacted.transcript),
                 categoryWPM: categoryWPM ?? {
                     science: null,
                     social: null,

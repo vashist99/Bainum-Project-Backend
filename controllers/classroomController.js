@@ -965,6 +965,8 @@ export const getClassroomTranscripts = async (req, res) => {
                 wordsPerMinute: a.wordsPerMinute,
                 categoryWPM: a.categoryWPM,
                 categoryWordCount: a.categoryWordCount,
+                languageFeatures: a.languageFeatures ?? null,
+                categoryLanguageFeatures: a.categoryLanguageFeatures ?? null,
                 keywordCounts: a.keywordCounts,
                 ragSegments: a.ragSegments,
                 classificationMethod: a.classificationMethod,
@@ -1009,7 +1011,7 @@ export const getClassroomAssessments = async (req, res) => {
                 hiddenObservationMongoFilter(req.user),
             )
         )
-            .select("teacherId date categoryWPM wordsPerMinute classroomId")
+            .select("teacherId date categoryWPM categoryWordCount wordsPerMinute wordCount durationSeconds activity activityContext classroomId languageFeatures categoryLanguageFeatures")
             .sort({ date: 1 })
             .lean();
 

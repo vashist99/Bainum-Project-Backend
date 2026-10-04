@@ -5,6 +5,7 @@ import revai from "../lib/revai.js";
 import ragClassifier from "../lib/ragClassifier.js";
 import { analyzeTranscript, extractKeywordSegments, computeCategoryWordCountFromSegments, deriveCategoryWordCountFromKeywordCounts } from "../lib/transcriptProcessor.js";
 import { redactPii } from "../lib/piiRedaction.js";
+import { languageFeaturesForTranscript } from "../lib/languageFeatures.js";
 import Classroom from "../models/Classroom.js";
 import {
     roleHasCapability,
@@ -215,6 +216,7 @@ const classroomWhisperController = async (req, res) => {
             durationSeconds,
             wordsPerMinute,
             categoryWPM,
+            ...languageFeaturesForTranscript(transcript),
             uploadedBy,
             date: assessmentDate,
             // Teachers upload from a classroom page and no longer send `center`
