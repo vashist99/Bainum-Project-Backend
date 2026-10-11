@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
 import fs from "fs";
-import revai from "../lib/revai.js";
+import stt from "../lib/navigatorWhisper.js";
 import ragClassifier from "../lib/ragClassifier.js";
 import { analyzeTranscript, extractKeywordSegments, computeCategoryWordCountFromSegments, deriveCategoryWordCountFromKeywordCounts } from "../lib/transcriptProcessor.js";
 import { redactPii } from "../lib/piiRedaction.js";
@@ -40,56 +40,51 @@ const revaiController = async (req, res) => {
             });
         }
 
-        // Check if RevAI API key exists
-        const config = revai.getConfig();
-        console.log(`RevAI configuration:`, {
+        const config = stt.getConfig();
+        console.log("NaviGator Whisper configuration:", {
             apiBaseUrl: config.apiBaseUrl,
+            model: config.model,
             apiKeySet: config.apiKeySet
         });
 
         if (!config.apiKeySet) {
-            console.warn("⚠️  RevAI API key not set - transcription may fail");
+            console.warn("⚠️  NaviGator API key not set - transcription may fail");
         }
 
-        // Check RevAI service health (non-blocking, just a warning)
         try {
-            const isHealthy = await revai.isHealthy();
+            const isHealthy = await stt.isHealthy();
             if (!isHealthy) {
-                console.warn("⚠️  RevAI service health check failed - will attempt transcription anyway");
+                console.warn("⚠️  NaviGator health check failed - will attempt transcription anyway");
             } else {
-                console.log("✓ RevAI service is ready");
+                console.log("✓ NaviGator Whisper is ready");
             }
         } catch (healthError) {
-            console.warn("⚠️  Could not check RevAI service health:", healthError.message);
+            console.warn("⚠️  Could not check NaviGator health:", healthError.message);
         }
 
-        // AbortController: when client cancels (e.g. Cancel button), stop polling immediately
-        // Note: RevAI does not support cancelling in-progress jobs; we stop our backend work to save resources
+        // AbortController: when the client cancels, abort the in-flight transcription request.
         const abortController = new AbortController();
         req.on('aborted', () => abortController.abort());
         req.on('close', () => {
             if (!res.headersSent) abortController.abort();
         });
 
-        // Transcribe audio using RevAI
         console.log(`Starting transcription for file: ${req.file.filename}`);
-        
-        // Optimize for speed: skip diarization (speaker identification) for faster processing
-        const transcriptionResult = await revai.transcribeFromFile(filePath, {
+
+        const transcriptionResult = await stt.transcribeFromFile(filePath, {
             filename: req.file.filename,
             mimetype: req.file.mimetype,
-            skipDiarization: true, // Skip speaker diarization for faster processing
-            language: 'en', // Specify language for faster processing
+            language: 'en',
             signal: abortController.signal
         });
 
-        console.log("RevAI Response received:", {
+        console.log("NaviGator Whisper response received:", {
             hasText: !!transcriptionResult.text,
             hasRaw: !!transcriptionResult.raw,
-            jobId: transcriptionResult.jobId
+            durationSeconds: transcriptionResult.durationSeconds
         });
         
-        const transcript = (await redactPii(revai.getTranscript(transcriptionResult) || "")).text;
+        const transcript = (await redactPii(stt.getTranscript(transcriptionResult) || "")).text;
         const durationSeconds = transcriptionResult?.durationSeconds ?? null;
         const wordCount = (transcript || '').split(/\s+/).filter(w => w.length > 0).length;
         const durationMinutes = durationSeconds && durationSeconds > 0 ? durationSeconds / 60 : null;
@@ -106,7 +101,7 @@ const revaiController = async (req, res) => {
 
         // Validate transcript
         if (!transcript || transcript.trim().length === 0) {
-            console.warn("⚠️  Empty transcript received from RevAI");
+            console.warn("⚠️  Empty transcript received from NaviGator Whisper");
         }
 
         // Analyze transcript for keywords (used for keyword-only fallback)
@@ -276,20 +271,20 @@ const revaiController = async (req, res) => {
         let statusCode = 500;
 
         if (error.message.includes("unreachable") || error.message.includes("ECONNREFUSED")) {
-            errorMessage = "RevAI service is not reachable. Please check your internet connection and API key.";
+            errorMessage = "Transcription service is not reachable. Check the network and NAVIGATOR_API_KEY.";
             statusCode = 503;
         } else if (error.message.includes("timeout") || error.message.includes("timed out")) {
             errorMessage = "Audio transcription timed out. The audio file may be too long or the service is overloaded.";
             statusCode = 504;
-        } else if (error.message.includes("not found")) {
+        } else if (error.message.includes("Audio file not found")) {
             errorMessage = "Audio file not found on server.";
             statusCode = 404;
-        } else if (error.message.includes("API error") || error.message.includes("RevAI")) {
-            errorMessage = `RevAI API error: ${error.message}`;
-            statusCode = 502;
         } else if (error.message.includes("API key")) {
-            errorMessage = "RevAI API key is required. Please set REVAI_API_KEY environment variable.";
+            errorMessage = "NaviGator API key is required. Set the NAVIGATOR_API_KEY environment variable.";
             statusCode = 401;
+        } else if (error.message.includes("API error") || error.message.includes("NaviGator")) {
+            errorMessage = `Transcription error: ${error.message}`;
+            statusCode = 502;
         } else {
             errorMessage = error.message || "Failed to process audio. Check server logs for details.";
         }

@@ -1,5 +1,5 @@
 import fs from "fs";
-import revai from "../lib/revai.js";
+import stt from "../lib/navigatorWhisper.js";
 import ragClassifier from "../lib/ragClassifier.js";
 import {
     analyzeTranscript,
@@ -14,7 +14,7 @@ import { redactPii } from "../lib/piiRedaction.js";
 import { languageFeaturesForTranscript } from "../lib/languageFeatures.js";
 
 /**
- * ENACT integration: receive audio from the ENACT mobile app, transcribe it via RevAI,
+ * ENACT integration: receive audio from the ENACT mobile app, transcribe it via NaviGator Whisper,
  * and auto-save the assessment — no manual review step.
  *
  * The child is looked up by invitedParentEmail, which is set when a parent accepts
@@ -54,15 +54,14 @@ const enactController = async (req, res) => {
         console.log(`ENACT: ${children.length} child(ren) found for ${emailNorm}`);
         filePath = req.file.path;
 
-        // Transcribe with RevAI
-        const transcriptionResult = await revai.transcribeFromFile(filePath, {
+        // Transcribe with NaviGator Whisper
+        const transcriptionResult = await stt.transcribeFromFile(filePath, {
             filename: req.file.filename,
             mimetype: req.file.mimetype,
-            skipDiarization: true,
             language: "en",
         });
 
-        const transcript = (await redactPii(revai.getTranscript(transcriptionResult) || "")).text;
+        const transcript = (await redactPii(stt.getTranscript(transcriptionResult) || "")).text;
         const durationSeconds = transcriptionResult?.durationSeconds ?? null;
         const wordCount = (transcript || "").split(/\s+/).filter((w) => w.length > 0).length;
         const durationMinutes = durationSeconds && durationSeconds > 0 ? durationSeconds / 60 : null;

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * STT (Speech-to-Text) evaluation script.
- * Computes Word Error Rate (WER) for RevAI transcription.
+ * Computes Word Error Rate (WER) for NaviGator Whisper transcription.
  *
  * Usage: node backend/scripts/eval/evaluate-stt.js (run from project root)
  *
@@ -109,14 +109,14 @@ async function main() {
   const limit = limitIdx >= 0 && process.argv[limitIdx + 1] ? parseInt(process.argv[limitIdx + 1], 10) : null;
   const toProcess = limit ? manifest.slice(0, limit) : manifest;
 
-  const revai = (await import("../../lib/revai.js")).default;
+  const stt = (await import("../../lib/navigatorWhisper.js")).default;
 
-  if (!revai.getConfig?.().apiKeySet && !process.env.REVAI_API_KEY) {
-    console.error("REVAI_API_KEY not set. Add it to .env");
+  if (!stt.getConfig?.().apiKeySet && !process.env.NAVIGATOR_API_KEY) {
+    console.error("NAVIGATOR_API_KEY not set. Add it to .env");
     process.exit(1);
   }
 
-  console.log("=== STT Evaluation (RevAI) ===\n");
+  console.log("=== STT Evaluation (NaviGator Whisper) ===\n");
   console.log(`Manifest: ${toProcess.length} samples${limit ? ` (--limit ${limit})` : ""}\n`);
 
   const results = [];
@@ -141,13 +141,12 @@ async function main() {
     process.stdout.write(`  [${idx + 1}/${toProcess.length}] ${entry.id} ... `);
 
     try {
-      const result = await revai.transcribeFromFile(audioPath, {
+      const result = await stt.transcribeFromFile(audioPath, {
         filename: path.basename(audioPath),
         mimetype: "audio/wav",
-        skipDiarization: true,
         language: "en",
       });
-      const hypothesis = revai.getTranscript(result) || "";
+      const hypothesis = stt.getTranscript(result) || "";
 
       const metrics = computeWER(reference, hypothesis);
       totalWER += metrics.wer * metrics.refWords;

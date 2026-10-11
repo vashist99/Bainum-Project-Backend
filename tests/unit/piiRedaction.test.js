@@ -110,7 +110,7 @@ describe("persist and generation hooks", () => {
         for (const rel of files) {
             const src = fs.readFileSync(path.join(backendRoot, rel), "utf8");
             assert.ok(
-                src.includes("await redactPii(revai.getTranscript"),
+                src.includes("await redactPii(stt.getTranscript"),
                 `${rel} redacts immediately around getTranscript`
             );
             const redactIdx = src.indexOf("await redactPii");

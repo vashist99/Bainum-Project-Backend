@@ -167,16 +167,16 @@ app.get("/", (req, res) => {
 app.get("/health", (req, res) => {
     const ragEnabled = process.env.RAG_ENABLED?.toString().toLowerCase().trim() === "true";
     const openaiKeySet = !!process.env.OPENAI_API_KEY;
-    const revaiKeySet = !!process.env.REVAI_API_KEY;
+    const navigatorKeySet = !!process.env.NAVIGATOR_API_KEY;
     const health = {
         status: "OK",
         rag: {
             enabled: ragEnabled,
             openaiKeySet
         },
-        revaiKeySet
+        navigatorKeySet
     };
-    console.log("[Health] RAG_ENABLED:", ragEnabled, "OPENAI_API_KEY set:", openaiKeySet, "REVAI_API_KEY set:", revaiKeySet);
+    console.log("[Health] RAG_ENABLED:", ragEnabled, "OPENAI_API_KEY set:", openaiKeySet, "NAVIGATOR_API_KEY set:", navigatorKeySet);
     res.status(200).json(health);
 });
 

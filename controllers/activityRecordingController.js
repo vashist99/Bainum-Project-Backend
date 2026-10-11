@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
 import fs from "fs";
-import revai from "../lib/revai.js";
+import stt from "../lib/navigatorWhisper.js";
 import ragClassifier from "../lib/ragClassifier.js";
 import {
     analyzeTranscript,
@@ -86,15 +86,14 @@ export const activityRecordingController = async (req, res) => {
             if (!res.headersSent) abortController.abort();
         });
 
-        const transcriptionResult = await revai.transcribeFromFile(filePath, {
+        const transcriptionResult = await stt.transcribeFromFile(filePath, {
             filename: req.file.filename,
             mimetype: req.file.mimetype,
-            skipDiarization: true,
             language: "en",
             signal: abortController.signal,
         });
 
-        const transcript = (await redactPii(revai.getTranscript(transcriptionResult) || "")).text;
+        const transcript = (await redactPii(stt.getTranscript(transcriptionResult) || "")).text;
         const durationSeconds = transcriptionResult?.durationSeconds ?? null;
         const wordCount = (transcript || "").split(/\s+/).filter((w) => w.length > 0).length;
         const durationMinutes = durationSeconds && durationSeconds > 0 ? durationSeconds / 60 : null;
@@ -219,7 +218,7 @@ export const activityRecordingController = async (req, res) => {
         let message = error.message || "Failed to process audio";
         if (message.includes("unreachable") || message.includes("ECONNREFUSED")) {
             statusCode = 503;
-            message = "RevAI service is not reachable. Please try again later.";
+            message = "Transcription service is not reachable. Please try again later.";
         } else if (message.includes("timeout")) {
             statusCode = 504;
             message = "Audio transcription timed out.";

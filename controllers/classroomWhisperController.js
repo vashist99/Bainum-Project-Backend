@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 import fs from "fs";
 import mongoose from "mongoose";
-import revai from "../lib/revai.js";
+import stt from "../lib/navigatorWhisper.js";
 import ragClassifier from "../lib/ragClassifier.js";
 import { analyzeTranscript, extractKeywordSegments, computeCategoryWordCountFromSegments, deriveCategoryWordCountFromKeywordCounts } from "../lib/transcriptProcessor.js";
 import { redactPii } from "../lib/piiRedaction.js";
@@ -104,9 +104,9 @@ const classroomWhisperController = async (req, res) => {
             return res.status(500).json({ message: "Uploaded file not found on server" });
         }
 
-        const config = revai.getConfig();
+        const config = stt.getConfig();
         if (!config.apiKeySet) {
-            console.warn("RevAI API key not set - transcription may fail");
+            console.warn("NaviGator API key not set - transcription may fail");
         }
 
         // AbortController: when client cancels, stop polling immediately
@@ -116,15 +116,14 @@ const classroomWhisperController = async (req, res) => {
             if (!res.headersSent) abortController.abort();
         });
 
-        const transcriptionResult = await revai.transcribeFromFile(filePath, {
+        const transcriptionResult = await stt.transcribeFromFile(filePath, {
             filename: req.file.filename,
             mimetype: req.file.mimetype,
-            skipDiarization: true,
             language: 'en',
             signal: abortController.signal
         });
 
-        const transcript = (await redactPii(revai.getTranscript(transcriptionResult) || "")).text;
+        const transcript = (await redactPii(stt.getTranscript(transcriptionResult) || "")).text;
         const durationSeconds = transcriptionResult?.durationSeconds ?? null;
         const wordCount = (transcript || '').split(/\s+/).filter(w => w.length > 0).length;
         const durationMinutes = durationSeconds && durationSeconds > 0 ? durationSeconds / 60 : null;
@@ -282,7 +281,7 @@ const classroomWhisperController = async (req, res) => {
         let statusCode = 500;
 
         if (error.message.includes("unreachable") || error.message.includes("ECONNREFUSED")) {
-            errorMessage = "RevAI service is not reachable. Please check your internet connection and API key.";
+            errorMessage = "Transcription service is not reachable. Check the network and NAVIGATOR_API_KEY.";
             statusCode = 503;
         } else if (error.message.includes("timeout")) {
             errorMessage = "Audio transcription timed out.";
